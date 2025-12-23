@@ -10,7 +10,6 @@
     ],
     "module": "ESNext",
     "skipLibCheck": true,
-    /* Bundler mode */
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "isolatedModules": true,
@@ -20,7 +19,7 @@
     "types": [
       "vite/client"
     ],
-    /* ✨ 핵심: 모든 타입 에러 무시 (검사 완화) */
+    /* 에러 무시 설정 (Strict Mode OFF) */
     "strict": false,
     "noImplicitAny": false,
     "noUnusedLocals": false,
