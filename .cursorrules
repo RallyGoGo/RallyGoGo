@@ -1,0 +1,17 @@
+# Strict Project Rules for RallyGoGo
+
+## Tech Stack
+- **Framework:** React (Vite) - NOT Next.js
+- **Language:** TypeScript (Strictly Typed)
+- **Styling:** Tailwind CSS
+- **State Management & Backend:** Supabase (Singleton Client)
+
+## Architecture
+- **Business Logic:** MUST be isolated in `/src/services`.
+- **Supabase Client:** access via `src/lib/supabase.ts` (Singleton).
+- **No Hallucinations:** Use only existing Supabase v2 features.
+
+## Coding Standards
+1. **Strict Types:** `noImplicitAny` is valid. Always define interfaces/types.
+2. **Latest Syntax:** Use functional components, hooks, and async/await.
+3. **Security:** RLS policies are the primary defense.
