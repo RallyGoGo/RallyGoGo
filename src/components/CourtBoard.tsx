@@ -35,13 +35,11 @@ export default function CourtBoard() {
     const fetchMatches = async () => {
         const { data: matchData } = await supabase.from('matches').select('*').neq('status', 'FINISHED');
         if (!matchData) return;
-
         const allPlayerIds = new Set<string>();
         matchData.forEach((m: any) => {
             if (m.player_1) allPlayerIds.add(m.player_1); if (m.player_2) allPlayerIds.add(m.player_2);
             if (m.player_3) allPlayerIds.add(m.player_3); if (m.player_4) allPlayerIds.add(m.player_4);
         });
-
         if (allPlayerIds.size > 0) {
             const { data: profiles } = await supabase.from('profiles').select('id, name').in('id', Array.from(allPlayerIds));
             const enriched = matchData.map((m: any) => ({
@@ -54,7 +52,7 @@ export default function CourtBoard() {
     };
 
     const handleAddCourt = () => { const nextChar = String.fromCharCode(65 + courts.length); setCourts([...courts, `Court ${nextChar}`]); };
-    const handleRemoveCourt = (courtName: string) => { if (activeMatches.find(m => m.court_name === courtName)) { alert("❌ Cannot remove active court!"); return; } if (confirm(`🗑️ Remove ${courtName}?`)) setCourts(prev => prev.filter(c => c !== courtName)); };
+    const handleRemoveCourt = (courtName: string) => { if (activeMatches.find(m => m.court_name === courtName)) { alert("❌ Court busy!"); return; } if (confirm(`🗑️ Remove ${courtName}?`)) setCourts(prev => prev.filter(c => c !== courtName)); };
 
     const getSortedQueue = async () => {
         const { data: queueData } = await supabase.from('queue').select('*');
@@ -133,7 +131,6 @@ export default function CourtBoard() {
     const handleCodeChange = (matchId: string, value: string) => setTournamentCode(prev => ({ ...prev, [matchId]: value }));
     const toggleTournament = (matchId: string) => setIsTournament(prev => ({ ...prev, [matchId]: !prev[matchId] }));
 
-    // 🔥 UPDATED: Submit Score and Save Delta
     const handleSubmitScore = async (matchId: string) => {
         const s = scores[matchId];
         if (!s || !s.t1 || !s.t2) { alert("Scores required"); return; }
@@ -149,13 +146,11 @@ export default function CourtBoard() {
         try {
             const match = activeMatches.find(m => m.id === matchId);
             const pIds = [match.player_1, match.player_2, match.player_3, match.player_4].filter(Boolean);
-
             const { data: players } = await supabase.from('profiles').select('id, gender, elo_men_doubles, elo_women_doubles, elo_mixed_doubles, elo_singles').in('id', pIds);
 
             if (players && players.length === 4) {
                 const males = players.filter(p => p.gender === 'Male').length;
                 let category = 'MIXED'; let eloField = 'elo_mixed_doubles'; let label = 'Mixed Doubles';
-
                 if (males === 4) { category = 'MEN_D'; eloField = 'elo_men_doubles'; label = "Men's Doubles"; }
                 else if (males === 0) { category = 'WOMEN_D'; eloField = 'elo_women_doubles'; label = "Women's Doubles"; }
 
@@ -170,9 +165,7 @@ export default function CourtBoard() {
                 const expectedT1 = 1 / (1 + Math.pow(10, (t2Avg - t1Avg) / 400));
                 const delta = Math.round(K * (actualT1 - expectedT1));
 
-                // 1. Update Profile Scores
                 const updates = [{ p: p1, d: delta }, { p: p2, d: delta }, { p: p3, d: -delta }, { p: p4, d: -delta }];
-
                 for (const u of updates) {
                     if (u.p) {
                         const newScore = (u.p as any)[eloField] + u.d;
@@ -180,17 +173,8 @@ export default function CourtBoard() {
                         await supabase.from('elo_history').insert({ player_id: u.p.id, match_category: category === 'MEN_D' ? 'MEN_D' : category === 'WOMEN_D' ? 'WOMEN_D' : 'MIXED', elo_score: newScore });
                     }
                 }
-
-                // 2. Save Match Record with DELTA ✨
-                await supabase.from('matches').update({
-                    score_team1: s1, score_team2: s2, winner_team: winner,
-                    status: 'FINISHED', end_time: new Date().toISOString(),
-                    match_type: isTourney ? 'TOURNAMENT' : 'REGULAR',
-                    match_category: category,
-                    elo_delta: delta // ✨ Save Delta!
-                }).eq('id', matchId);
+                await supabase.from('matches').update({ score_team1: s1, score_team2: s2, winner_team: winner, status: 'FINISHED', end_time: new Date().toISOString(), match_type: isTourney ? 'TOURNAMENT' : 'REGULAR', match_category: category, elo_delta: delta }).eq('id', matchId);
             }
-
             if (pIds.length > 0) { await supabase.from('queue').insert(pIds.map(pid => ({ player_id: pid, joined_at: new Date().toISOString(), arrived_at: new Date().toISOString(), departure_time: '23:00', priority_score: 2.5 }))); }
             fetchMatches();
         } catch (e: any) { alert(e.message); } setLoading(false);
@@ -256,13 +240,38 @@ export default function CourtBoard() {
                 );
             })}
 
-            {/* Small Add Court Button */}
             <button onClick={handleAddCourt} className="w-full h-14 border-2 border-dashed border-slate-700 hover:border-lime-500/50 rounded-2xl flex items-center justify-center text-slate-500 hover:text-lime-400 font-bold transition-all group">
                 <span className="text-2xl mr-2 group-hover:scale-125 transition-transform">+</span> <span>Add Court</span>
             </button>
 
-            {/* Modals are omitted for brevity... */}
-            {/* ... (Previous Modals Code) ... */}
+            {isManualModalOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+                    <div className="bg-slate-800 border border-slate-600 rounded-2xl w-full max-w-md max-h-[80vh] flex flex-col shadow-2xl">
+                        <div className="p-4 border-b border-slate-700 flex justify-between items-center"><h3 className="text-white font-bold text-lg">👆 Manual ({selectedManualPlayers.length}/4)</h3><button onClick={() => setIsManualModalOpen(false)} className="text-slate-400 hover:text-white">✕</button></div>
+                        <div className="p-4 border-b border-slate-900/50"><input type="text" placeholder="Search..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-slate-800 border border-slate-600 text-white p-2 rounded-lg outline-none" autoFocus /></div>
+                        <div className="overflow-y-auto flex-1 p-2 space-y-1">
+                            {filteredCandidates.map((c) => {
+                                const idx = selectedManualPlayers.findIndex(p => p.player_id === c.player_id); const isSel = idx !== -1;
+                                return (<button key={c.player_id} onClick={() => toggleManualSelection(c)} className={`w-full flex justify-between p-3 rounded-xl border ${isSel ? 'bg-lime-500/20 border-lime-500/50' : 'hover:bg-slate-700 border-transparent'}`}><div className="flex gap-3"><span className={`w-6 h-6 rounded-full flex center text-xs font-bold ${isSel ? 'bg-lime-500 text-slate-900' : 'bg-slate-700 text-slate-300'}`}>{isSel ? idx + 1 : '-'}</span><p className="text-white font-bold text-sm">{c.profiles?.name} {c.profiles?.is_guest && '(G)'}</p></div></button>);
+                            })}
+                        </div>
+                        <div className="p-4 border-t border-slate-700"><button onClick={confirmManualMatch} disabled={selectedManualPlayers.length !== 4} className="w-full py-3 bg-lime-600 hover:bg-lime-500 text-white font-bold rounded-xl shadow-lg disabled:opacity-50">Create Match</button></div>
+                    </div>
+                </div>
+            )}
+            {isSwapModalOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+                    <div className="bg-slate-800 border border-slate-600 rounded-2xl w-full max-w-md max-h-[80vh] flex flex-col shadow-2xl">
+                        <div className="p-4 border-b border-slate-700 flex justify-between items-center"><h3 className="text-white font-bold text-lg">Swap Player</h3><button onClick={() => setIsSwapModalOpen(false)} className="text-slate-400 hover:text-white">✕</button></div>
+                        <div className="p-4 border-b border-slate-900/50"><input type="text" placeholder="Search..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-slate-800 border border-slate-600 text-white p-2 rounded-lg outline-none" autoFocus /></div>
+                        <div className="overflow-y-auto flex-1 p-2 space-y-1">
+                            {filteredCandidates.map((c, idx) => (
+                                <button key={c.player_id} onClick={() => handleExecuteSwap(c)} className="w-full flex justify-between p-3 rounded-xl hover:bg-lime-500/20 border border-transparent"><div className="flex gap-3"><span className="w-6 h-6 bg-slate-700 rounded-full flex center text-xs font-bold text-slate-300">{idx + 1}</span><p className="text-white font-bold text-sm">{c.profiles?.name} {c.profiles?.is_guest && '(G)'}</p></div><span className="text-xs bg-slate-700 text-slate-300 px-2 py-1 rounded">Select</span></button>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
