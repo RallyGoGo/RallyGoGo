@@ -1,107 +1,132 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import type { User } from '@supabase/supabase-js';
-import GuestRegistrar from './GuestRegistrar';
 
-type QueueItem = {
-    id: string;
-    player_id: string;
-    joined_at: string;
-    arrived_at?: string;
-    departure_time: string | null;
-    priority_score: number;
-    profiles: { email: string; ntrp: number; name?: string; is_guest?: boolean; };
-    gamesPlayedToday: number;
-    finalScore: number;
-};
+interface QueueItem {
+    id: number;
+    user_id: string;
+    created_at: string;
+    is_active: boolean;
+    game_type: string;
+    profiles: {
+        name: string;
+        ntrp: number;
+        gender: string;
+        emoji?: string;
+    } | null; // ✨ 프로필이 없을 수도 있음을 명시
+}
 
-type Props = { user: User | null };
-
-export default function QueueBoard({ user }: Props) {
-    const [queueList, setQueueList] = useState<QueueItem[]>([]);
-    const [isGuestModalOpen, setIsGuestModalOpen] = useState(false);
-
-    const formatTime = (isoString: string | null) => {
-        if (!isoString) return '--:--';
-        return new Date(isoString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    };
-
-    const fetchQueue = useCallback(async () => {
-        try {
-            const { data: queueData } = await supabase.from('queue').select('*');
-            if (!queueData) return;
-
-            const playerIds = queueData.map(q => q.player_id);
-            let profilesData: any[] = [];
-            if (playerIds.length > 0) {
-                const { data: pData } = await supabase.from('profiles').select('id, email, ntrp, name, is_guest').in('id', playerIds);
-                profilesData = pData || [];
-            }
-
-            const { data: matches } = await supabase.from('matches').select('player_1, player_2, player_3, player_4').eq('status', 'FINISHED');
-            const gameCounts: { [key: string]: number } = {};
-            if (matches) {
-                matches.forEach(m => {
-                    [m.player_1, m.player_2, m.player_3, m.player_4].forEach(pid => { if (pid) gameCounts[pid] = (gameCounts[pid] || 0) + 1; });
-                });
-            }
-
-            const mergedList = queueData.map((item) => {
-                const profile = profilesData?.find(p => p.id === item.player_id) || { email: 'Unknown', ntrp: 2.5, name: 'Unknown' };
-                const gamesPlayedToday = gameCounts[item.player_id] || 0;
-
-                let score = item.priority_score || 2.5;
-                if (gamesPlayedToday === 0) score += 2000;
-                score -= (gamesPlayedToday * 500);
-                const waitMins = (Date.now() - new Date(item.joined_at).getTime()) / 60000;
-                score += (waitMins * 10);
-                if (item.departure_time) score += 500;
-                if (profile.is_guest) score += 300;
-
-                return { ...item, profiles: profile, gamesPlayedToday, finalScore: Math.floor(score) };
-            });
-
-            setQueueList(mergedList.sort((a: any, b: any) => b.finalScore - a.finalScore));
-        } catch (err: any) { console.error(err); }
-    }, []);
+export default function QueueBoard({ user }: { user: any }) {
+    const [queue, setQueue] = useState<QueueItem[]>([]);
+    const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         fetchQueue();
-        const channel = supabase.channel('public:queue_list').on('postgres_changes', { event: '*', schema: 'public', table: 'queue' }, () => { fetchQueue(); }).subscribe();
-        return () => { supabase.removeChannel(channel); };
-    }, [fetchQueue]);
+
+        // 실시간 대기열 변화 감지
+        const channel = supabase
+            .channel('public:queue')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'queue' }, () => {
+                fetchQueue();
+            })
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
+    }, []);
+
+    const fetchQueue = async () => {
+        try {
+            // 대기열 데이터 가져오기 (프로필 정보 조인)
+            const { data, error } = await supabase
+                .from('queue')
+                .select(`
+          id, user_id, created_at, is_active, game_type,
+          profiles (name, ntrp, gender, emoji)
+        `)
+                .eq('is_active', true)
+                .order('created_at', { ascending: true });
+
+            if (error) throw error;
+            setQueue(data || []);
+        } catch (error) {
+            console.error('Error fetching queue:', error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // 대기 시간 계산 함수
+    const getTimeDiff = (dateString: string) => {
+        const diff = new Date().getTime() - new Date(dateString).getTime();
+        const minutes = Math.floor(diff / 60000);
+        return minutes < 1 ? '방금' : `${minutes}분 전`;
+    };
+
+    // 삭제 함수 (내 대기열 취소)
+    const handleLeave = async (id: number) => {
+        if (!window.confirm("대기열을 취소하시겠습니까?")) return;
+        await supabase.from('queue').delete().eq('id', id);
+        fetchQueue();
+    };
+
+    if (loading) return <div className="text-center p-4 text-slate-500">대기열 로딩 중...</div>;
 
     return (
-        <div className="bg-slate-800/50 p-6 rounded-2xl border border-white/10 h-full flex flex-col relative">
-            <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-bold text-white flex items-center gap-2">Current Queue <span className="text-lime-400">({queueList.length})</span></h2>
-                <button onClick={() => setIsGuestModalOpen(true)} className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg font-bold shadow transition-all flex items-center gap-1">🏃 Add Guest</button>
-            </div>
-            <div className="space-y-3">
-                {queueList.length === 0 ? <div className="text-center py-8 text-slate-500 bg-slate-800/30 rounded-xl border border-white/5">No players in queue.</div> : queueList.map((item, index) => (
-                    <div key={item.id} className={`relative p-4 rounded-xl border flex items-center justify-between transition-all ${item.player_id === user?.id ? 'bg-lime-500/10 border-lime-500/50 scale-[1.02]' : 'bg-slate-800/80 border-slate-700'}`}>
-                        <div className="absolute -left-2 -top-2 w-6 h-6 bg-slate-700 border border-slate-500 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-md z-10">{index + 1}</div>
-                        <div className="flex items-center space-x-3">
-                            <div className="text-left">
-                                <p className="text-white font-bold text-sm flex items-center gap-2">
-                                    {item.profiles?.name || item.profiles?.email?.split('@')[0]}
-                                    {item.profiles?.is_guest && <span className="text-[9px] bg-indigo-500 text-white px-1 rounded">GUEST</span>}
-                                    {item.gamesPlayedToday === 0 && <span className="px-1.5 py-0.5 bg-lime-500 text-slate-900 text-[10px] uppercase font-extrabold rounded-md shadow-sm">New!</span>}
-                                </p>
-                                <div className="text-xs text-slate-400 flex gap-3 mt-1">
-                                    <span>🕒 In: <span className="text-white">{formatTime(item.arrived_at || item.joined_at)}</span></span>
-                                    <span>🚪 Out: <span className="text-lime-300 font-mono">{item.departure_time || 'Unknown'}</span></span>
-                                </div>
-                            </div>
-                        </div>
-                        <div className="text-right">
-                            <p className="text-lime-400 font-bold text-lg">{item.finalScore}</p>
-                            <p className="text-slate-500 text-[10px]">Games: {item.gamesPlayedToday}</p>
-                        </div>
+        <div className="bg-slate-800 rounded-2xl p-6 border border-slate-700 shadow-xl h-full flex flex-col">
+            <h3 className="text-xl font-black text-white mb-4 flex items-center justify-between">
+                <span className="flex items-center gap-2">⏳ 대기 현황 <span className="text-lime-400 text-sm">({queue.length}명)</span></span>
+            </h3>
+
+            <div className="flex-1 overflow-y-auto space-y-3 custom-scrollbar">
+                {queue.length === 0 ? (
+                    <div className="text-center py-10 text-slate-500">
+                        <p className="text-4xl mb-2">🍃</p>
+                        <p>현재 대기자가 없습니다.</p>
                     </div>
-                ))}
+                ) : (
+                    queue.map((item) => {
+                        // ✨ 에러 방지 핵심: 프로필이 없으면 'Unknown'으로 처리 (toLowerCase 에러 방지)
+                        const profile = item.profiles || { name: 'Unknown', ntrp: 0, gender: 'Unknown' };
+                        const isMe = item.user_id === user.id;
+
+                        return (
+                            <div
+                                key={item.id}
+                                className={`flex items-center justify-between p-3 rounded-xl border ${isMe ? 'bg-lime-900/20 border-lime-500/50' : 'bg-slate-700/30 border-slate-700'
+                                    }`}
+                            >
+                                <div className="flex items-center gap-3">
+                                    <div className={`w-10 h-10 rounded-full flex items-center justify-center text-lg font-bold ${isMe ? 'bg-lime-500 text-slate-900' : 'bg-slate-600 text-slate-300'
+                                        }`}>
+                                        {profile.emoji || (profile.gender === 'Male' ? '👨' : '👩')}
+                                    </div>
+                                    <div>
+                                        <div className="font-bold text-white flex items-center gap-2">
+                                            {profile.name}
+                                            {isMe && <span className="text-[10px] bg-lime-500 text-slate-900 px-1 rounded font-black">ME</span>}
+                                        </div>
+                                        <div className="text-xs text-slate-400 font-mono flex gap-2">
+                                            <span className="text-lime-400">NTRP {profile.ntrp?.toFixed(1) || '?.?'}</span>
+                                            <span>• {item.game_type || '단식'}</span>
+                                            <span>• {getTimeDiff(item.created_at)}</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {isMe && (
+                                    <button
+                                        onClick={() => handleLeave(item.id)}
+                                        className="text-rose-400 hover:text-rose-300 text-xs border border-rose-500/30 px-2 py-1 rounded hover:bg-rose-500/10 transition-colors"
+                                    >
+                                        취소
+                                    </button>
+                                )}
+                            </div>
+                        );
+                    })
+                )}
             </div>
-            {isGuestModalOpen && <GuestRegistrar onClose={() => setIsGuestModalOpen(false)} onSuccess={() => { fetchQueue(); }} />}
         </div>
     );
 }

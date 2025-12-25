@@ -3,26 +3,13 @@ import { supabase } from '../lib/supabase';
 
 export default function Auth() {
     const [loading, setLoading] = useState(false);
-    const [isSignUp, setIsSignUp] = useState(false); // 로그인 vs 회원가입 모드
-
-    // 입력 폼 데이터
+    const [isSignUp, setIsSignUp] = useState(false);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
-    const [name, setName] = useState('');
-    const [gender, setGender] = useState('Male'); // 기본값 남성
-    const [ntrp, setNtrp] = useState(2.5); // 기본 NTRP
 
-    // NTRP 설명 데이터
-    const getNtrpDescription = (score: number) => {
-        if (score <= 1.5) return "🎾 입문자: 이제 막 레슨을 시작했어요.";
-        if (score <= 2.0) return "초급: 랠리가 조금씩 되지만 아직 서툴러요.";
-        if (score <= 2.5) return "초중급: 느린 공은 랠리가 가능해요 (동호인 입문).";
-        if (score <= 3.0) return "중급: 중간 속도의 공을 꾸준히 넘길 수 있어요.";
-        if (score <= 3.5) return "중상급: 네트 플레이가 가능하고 컨트롤이 좋아졌어요.";
-        if (score <= 4.0) return "상급: 스핀과 파워를 자유롭게 구사해요 (동호인 고수).";
-        if (score <= 4.5) return "최상급: 파워와 꾸준함을 모두 갖췄어요.";
-        return "🔥 선수급: 설명이 필요 없는 수준!";
-    };
+    const [name, setName] = useState('');
+    const [ntrp, setNtrp] = useState('2.5');
+    const [gender, setGender] = useState('Male');
 
     const handleAuth = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -30,46 +17,38 @@ export default function Auth() {
 
         try {
             if (isSignUp) {
-                // [회원가입]
-                // 1. Supabase 계정 생성
-                const { data, error: signUpError } = await supabase.auth.signUp({
+                // 1. 회원가입
+                const { data, error } = await supabase.auth.signUp({
                     email,
                     password,
                 });
-                if (signUpError) throw signUpError;
+                if (error) throw error;
 
-                // 2. 추가 정보(이름, 성별, NTRP, 초기 ELO)를 profiles 테이블에 저장
+                // 2. 프로필 저장 (중요: elo_doubles가 있으면 안 됩니다!)
                 if (data.user) {
-                    // 초기 ELO 점수 계산 공식: 기본 1000점 + (NTRP * 100)
-                    // 예: NTRP 2.5 = 1250점 시작
-                    const initialElo = 1000 + (ntrp * 100);
-
                     const { error: profileError } = await supabase.from('profiles').insert({
-                        id: data.user.id, // 계정 ID와 똑같이 맞춤
+                        id: data.user.id,
                         email: email,
                         name: name,
+                        ntrp: parseFloat(ntrp),
                         gender: gender,
-                        ntrp: ntrp,
-                        is_guest: false,
-                        // 각종 게임 모드별 초기 점수 설정
-                        elo_singles: initialElo,
-                        elo_doubles: initialElo,
-                        elo_mixed_doubles: initialElo,
-                        elo_men_doubles: initialElo,
-                        elo_women_doubles: initialElo,
+                        // 👇 여기를 잘 보세요! elo_doubles는 없고, 4개로 나뉜 점수만 있어야 합니다.
+                        elo_men_doubles: 1250,
+                        elo_women_doubles: 1250,
+                        elo_mixed_doubles: 1250,
+                        elo_singles: 1250
                     });
 
                     if (profileError) {
-                        // 프로필 저장 실패 시 (혹시 모르니 알림)
-                        console.error('Profile Error:', profileError);
-                        alert('가입은 됐는데 프로필 저장에 실패했습니다. 관리자에게 문의하세요.');
+                        console.error('Profile save error:', profileError);
+                        alert('프로필 저장 실패: ' + profileError.message);
                     } else {
-                        alert(`환영합니다, ${name}님! 회원가입이 완료되었습니다.`);
-                        setIsSignUp(false); // 로그인 화면으로 전환
+                        alert('가입 성공! 로그인해주세요.');
+                        setIsSignUp(false);
                     }
                 }
             } else {
-                // [로그인]
+                // 3. 로그인
                 const { error } = await supabase.auth.signInWithPassword({
                     email,
                     password,
@@ -84,71 +63,54 @@ export default function Auth() {
     };
 
     return (
-        <div className="flex flex-col items-center justify-center min-h-screen bg-slate-900 text-white p-4 animate-fadeIn">
-            <div className="max-w-md w-full bg-slate-800 p-8 rounded-2xl shadow-xl border border-slate-700">
-                <div className="text-center mb-6">
-                    <h1 className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-lime-400 to-emerald-500 mb-2">
-                        RallyGoGo 🎾
-                    </h1>
-                    <p className="text-slate-400">Tennis Match & Ranking System</p>
-                </div>
+        <div className="flex justify-center items-center min-h-screen bg-slate-900 p-4">
+            <div className="w-full max-w-md bg-slate-800 p-8 rounded-2xl shadow-2xl border border-slate-700">
+                <h2 className="text-3xl font-black text-white mb-6 text-center">
+                    {isSignUp ? '✨ 회원가입' : '🎾 RallyGoGo'}
+                </h2>
 
                 <form onSubmit={handleAuth} className="space-y-4">
-                    {/* 로그인/회원가입 공통: 이메일 & 비번 */}
                     <div>
-                        <label className="block text-sm font-bold text-slate-400 mb-1">Email</label>
-                        <input type="email" placeholder="email@example.com" value={email} onChange={e => setEmail(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 focus:outline-none focus:border-lime-500" required />
+                        <label className="block text-xs text-slate-400 mb-1">Email</label>
+                        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className="w-full bg-slate-900 border border-slate-600 rounded-lg p-3 text-white focus:border-lime-400 outline-none" placeholder="example@gmail.com" />
                     </div>
                     <div>
-                        <label className="block text-sm font-bold text-slate-400 mb-1">Password</label>
-                        <input type="password" placeholder="6자리 이상 입력" value={password} onChange={e => setPassword(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 focus:outline-none focus:border-lime-500" required minLength={6} />
+                        <label className="block text-xs text-slate-400 mb-1">Password</label>
+                        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required className="w-full bg-slate-900 border border-slate-600 rounded-lg p-3 text-white focus:border-lime-400 outline-none" placeholder="******" />
                     </div>
 
-                    {/* ✨ 회원가입 모드일 때만 보이는 추가 정보들 ✨ */}
                     {isSignUp && (
-                        <div className="space-y-4 pt-4 border-t border-slate-700 animate-slideDown">
+                        <div className="space-y-4 animate-fadeIn">
                             <div>
-                                <label className="block text-sm font-bold text-slate-400 mb-1">Name (Nickname)</label>
-                                <input type="text" placeholder="홍길동" value={name} onChange={e => setName(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 focus:outline-none focus:border-lime-500" required />
+                                <label className="block text-xs text-slate-400 mb-1">Name (실명)</label>
+                                <input type="text" value={name} onChange={(e) => setName(e.target.value)} required className="w-full bg-slate-900 border border-slate-600 rounded-lg p-3 text-white focus:border-lime-400 outline-none" placeholder="홍길동" />
                             </div>
-
-                            <div>
-                                <label className="block text-sm font-bold text-slate-400 mb-1">Gender</label>
-                                <div className="flex gap-4">
-                                    <label className={`flex-1 p-3 rounded-lg border cursor-pointer text-center font-bold ${gender === 'Male' ? 'bg-blue-600 border-blue-500' : 'bg-slate-900 border-slate-700'}`}>
-                                        <input type="radio" name="gender" value="Male" checked={gender === 'Male'} onChange={() => setGender('Male')} className="hidden" /> 👨 남성
-                                    </label>
-                                    <label className={`flex-1 p-3 rounded-lg border cursor-pointer text-center font-bold ${gender === 'Female' ? 'bg-rose-600 border-rose-500' : 'bg-slate-900 border-slate-700'}`}>
-                                        <input type="radio" name="gender" value="Female" checked={gender === 'Female'} onChange={() => setGender('Female')} className="hidden" /> 👩 여성
-                                    </label>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">Gender</label>
+                                    <select value={gender} onChange={(e) => setGender(e.target.value)} className="w-full bg-slate-900 border border-slate-600 rounded-lg p-3 text-white outline-none">
+                                        <option value="Male">남성 (Male)</option>
+                                        <option value="Female">여성 (Female)</option>
+                                    </select>
                                 </div>
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-bold text-slate-400 mb-2 flex justify-between">
-                                    <span>NTRP Level</span>
-                                    <span className="text-lime-400 font-mono text-lg">{ntrp.toFixed(1)}</span>
-                                </label>
-                                <input
-                                    type="range" min="1.0" max="7.0" step="0.5"
-                                    value={ntrp} onChange={e => setNtrp(parseFloat(e.target.value))}
-                                    className="w-full accent-lime-500 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer"
-                                />
-                                <p className="text-xs text-emerald-400 mt-2 text-center font-medium bg-emerald-400/10 p-2 rounded">
-                                    {getNtrpDescription(ntrp)}
-                                </p>
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">NTRP</label>
+                                    <select value={ntrp} onChange={(e) => setNtrp(e.target.value)} className="w-full bg-slate-900 border border-slate-600 rounded-lg p-3 text-white outline-none">
+                                        {[1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0].map(n => <option key={n} value={n}>{n.toFixed(1)}</option>)}
+                                    </select>
+                                </div>
                             </div>
                         </div>
                     )}
 
-                    <button type="submit" disabled={loading} className="w-full bg-gradient-to-r from-lime-500 to-lime-600 hover:from-lime-400 hover:to-lime-500 text-slate-900 font-black py-4 rounded-xl text-lg shadow-lg shadow-lime-500/20 mt-6">
-                        {loading ? 'Processing...' : (isSignUp ? '✨ Sign Up (가입완료)' : '🚀 Log In')}
+                    <button type="submit" disabled={loading} className="w-full bg-lime-500 hover:bg-lime-400 text-slate-900 font-bold py-3 rounded-xl transition-all mt-4">
+                        {loading ? '처리 중...' : isSignUp ? '가입하기' : '로그인'}
                     </button>
                 </form>
 
                 <div className="mt-6 text-center">
-                    <button onClick={() => setIsSignUp(!isSignUp)} className="text-slate-400 hover:text-white underline text-sm transition-colors">
-                        {isSignUp ? '이미 계정이 있나요? 로그인하러 가기' : '아직 계정이 없나요? 회원가입하기'}
+                    <button onClick={() => setIsSignUp(!isSignUp)} className="text-sm text-slate-400 hover:text-white underline">
+                        {isSignUp ? '이미 계정이 있나요? 로그인' : '계정이 없나요? 회원가입'}
                     </button>
                 </div>
             </div>
