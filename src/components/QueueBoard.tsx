@@ -1,30 +1,33 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import type { User } from '@supabase/supabase-js';
 
-interface QueueItem {
-    id: number;
+type QueueItem = {
+    id: string;
     user_id: string;
-    created_at: string;
-    is_active: boolean;
+    departure_time: string;
     game_type: string;
+    created_at: string;
+    priority_score: number;
+    // profiles 테이블과 조인된 데이터
     profiles: {
         name: string;
         ntrp: number;
         gender: string;
-        emoji?: string;
-    } | null; // ✨ 프로필이 없을 수도 있음을 명시
-}
+        emoji: string;
+    } | null;
+};
 
-export default function QueueBoard({ user }: { user: any }) {
+export default function QueueBoard({ user }: { user: User }) {
     const [queue, setQueue] = useState<QueueItem[]>([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         fetchQueue();
 
-        // 실시간 대기열 변화 감지
+        // ✨ 실시간 구독 (DB가 변하면 즉시 화면 갱신)
         const channel = supabase
-            .channel('public:queue')
+            .channel('queue_realtime')
             .on('postgres_changes', { event: '*', schema: 'public', table: 'queue' }, () => {
                 fetchQueue();
             })
@@ -37,18 +40,18 @@ export default function QueueBoard({ user }: { user: any }) {
 
     const fetchQueue = async () => {
         try {
-            // 대기열 데이터 가져오기 (프로필 정보 조인)
+            setLoading(true);
             const { data, error } = await supabase
                 .from('queue')
                 .select(`
-          id, user_id, created_at, is_active, game_type,
+          *,
           profiles (name, ntrp, gender, emoji)
         `)
                 .eq('is_active', true)
                 .order('created_at', { ascending: true });
 
             if (error) throw error;
-            setQueue(data || []);
+            setQueue(data as any || []);
         } catch (error) {
             console.error('Error fetching queue:', error);
         } finally {
@@ -56,68 +59,60 @@ export default function QueueBoard({ user }: { user: any }) {
         }
     };
 
-    // 대기 시간 계산 함수
-    const getTimeDiff = (dateString: string) => {
-        const diff = new Date().getTime() - new Date(dateString).getTime();
-        const minutes = Math.floor(diff / 60000);
-        return minutes < 1 ? '방금' : `${minutes}분 전`;
+    const handleCancel = async (queueId: string) => {
+        if (!confirm("대기를 취소하시겠습니까?")) return;
+        const { error } = await supabase.from('queue').delete().eq('id', queueId);
+        if (error) alert("취소 실패");
+        // 성공 시 실시간 구독이 알아서 fetchQueue를 실행하므로, 여기서 굳이 호출 안 해도 되지만 안전하게 둠
     };
 
-    // 삭제 함수 (내 대기열 취소)
-    const handleLeave = async (id: number) => {
-        if (!window.confirm("대기열을 취소하시겠습니까?")) return;
-        await supabase.from('queue').delete().eq('id', id);
-        fetchQueue();
-    };
-
-    if (loading) return <div className="text-center p-4 text-slate-500">대기열 로딩 중...</div>;
+    if (loading) return <div className="text-center py-10 text-slate-500">로딩 중...</div>;
 
     return (
-        <div className="bg-slate-800 rounded-2xl p-6 border border-slate-700 shadow-xl h-full flex flex-col">
-            <h3 className="text-xl font-black text-white mb-4 flex items-center justify-between">
-                <span className="flex items-center gap-2">⏳ 대기 현황 <span className="text-lime-400 text-sm">({queue.length}명)</span></span>
+        <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-4 h-full flex flex-col">
+            <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                <span>📋</span> 현재 대기 현황 <span className="text-lime-400 text-sm">({queue.length}명)</span>
             </h3>
 
-            <div className="flex-1 overflow-y-auto space-y-3 custom-scrollbar">
+            <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
                 {queue.length === 0 ? (
-                    <div className="text-center py-10 text-slate-500">
-                        <p className="text-4xl mb-2">🍃</p>
+                    <div className="text-center py-10 text-slate-500 bg-slate-900/50 rounded-xl border border-dashed border-slate-700">
+                        <p className="text-2xl mb-2">🎾</p>
                         <p>현재 대기자가 없습니다.</p>
+                        <p className="text-xs mt-1">1등으로 등록해보세요!</p>
                     </div>
                 ) : (
-                    queue.map((item) => {
-                        // ✨ 에러 방지 핵심: 프로필이 없으면 'Unknown'으로 처리 (toLowerCase 에러 방지)
-                        const profile = item.profiles || { name: 'Unknown', ntrp: 0, gender: 'Unknown' };
+                    queue.map((item, index) => {
+                        const profile = item.profiles || { name: 'Unknown', ntrp: 0, gender: '-', emoji: '👤' };
                         const isMe = item.user_id === user.id;
 
                         return (
-                            <div
-                                key={item.id}
-                                className={`flex items-center justify-between p-3 rounded-xl border ${isMe ? 'bg-lime-900/20 border-lime-500/50' : 'bg-slate-700/30 border-slate-700'
-                                    }`}
-                            >
+                            <div key={item.id} className={`p-3 rounded-xl border flex justify-between items-center transition-all ${isMe ? 'bg-indigo-900/30 border-indigo-500/50 shadow-lg shadow-indigo-500/10' : 'bg-slate-900/50 border-white/5'}`}>
                                 <div className="flex items-center gap-3">
-                                    <div className={`w-10 h-10 rounded-full flex items-center justify-center text-lg font-bold ${isMe ? 'bg-lime-500 text-slate-900' : 'bg-slate-600 text-slate-300'
-                                        }`}>
-                                        {profile.emoji || (profile.gender === 'Male' ? '👨' : '👩')}
+                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm border ${isMe ? 'bg-indigo-600 border-indigo-400' : 'bg-slate-700 border-slate-600'}`}>
+                                        {index + 1}
                                     </div>
                                     <div>
-                                        <div className="font-bold text-white flex items-center gap-2">
-                                            {profile.name}
-                                            {isMe && <span className="text-[10px] bg-lime-500 text-slate-900 px-1 rounded font-black">ME</span>}
+                                        <div className="flex items-center gap-2">
+                                            <p className={`font-bold text-sm ${isMe ? 'text-white' : 'text-slate-200'}`}>
+                                                {profile.name}
+                                            </p>
+                                            <span className="text-[10px] px-1.5 py-0.5 bg-slate-800 rounded text-slate-400 border border-slate-700">
+                                                {profile.ntrp?.toFixed(1)}
+                                            </span>
                                         </div>
-                                        <div className="text-xs text-slate-400 font-mono flex gap-2">
-                                            <span className="text-lime-400">NTRP {profile.ntrp?.toFixed(1) || '?.?'}</span>
-                                            <span>• {item.game_type || '단식'}</span>
-                                            <span>• {getTimeDiff(item.created_at)}</span>
+                                        <div className="flex gap-2 text-[10px] text-slate-400 mt-0.5">
+                                            <span className="flex items-center gap-1">⏰ {item.departure_time || '시간미정'}</span>
+                                            {/* 👇 여기가 수정된 부분입니다: 복잡한 조건문 제거하고 심플하게 변경 */}
+                                            <span className="flex items-center gap-1">🎾 매치 대기</span>
                                         </div>
                                     </div>
                                 </div>
 
                                 {isMe && (
                                     <button
-                                        onClick={() => handleLeave(item.id)}
-                                        className="text-rose-400 hover:text-rose-300 text-xs border border-rose-500/30 px-2 py-1 rounded hover:bg-rose-500/10 transition-colors"
+                                        onClick={() => handleCancel(item.id)}
+                                        className="px-3 py-1.5 bg-rose-500/20 text-rose-400 text-xs font-bold rounded-lg hover:bg-rose-500 hover:text-white transition-colors border border-rose-500/30"
                                     >
                                         취소
                                     </button>
