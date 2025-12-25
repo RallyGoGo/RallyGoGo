@@ -63,7 +63,7 @@ export default function App() {
 
   const handleAdminClick = () => {
     const pin = prompt("🔐 관리자 모드 PIN:");
-    if (pin === '7777') setIsAdminOpen(true);
+    if (pin === '0909') setIsAdminOpen(true);
     else if (pin) alert("❌ 땡!");
   };
 
