@@ -1,20 +1,16 @@
 import { useState, useEffect } from 'react';
 import { supabase } from './lib/supabase';
 
-// ✨ Auth는 필수
 import Auth from './components/Auth';
+// ✅ Ranking.tsx를 불러옵니다.
+import RankingBoard from './components/Ranking';
 
-// ✨ 가지고 계신 RankingBoard로 교체!
-import RankingBoard from './components/RankingBoard';
-
-// 나머지 컴포넌트들
 import JoinQueue from './components/JoinQueue';
 import QueueBoard from './components/QueueBoard';
 import CourtBoard from './components/CourtBoard';
 import MyStatsModal from './components/MyStatsModal';
 import AdminDashboard from './components/AdminDashboard';
 
-// 프로필 타입
 interface Profile {
   name: string;
   ntrp: number;
@@ -105,7 +101,6 @@ export default function App() {
           </div>
         ) : (
           <div className="max-w-2xl mx-auto min-h-[80vh]">
-            {/* ✨ 여기가 핵심! RankingBoard 연결 */}
             <RankingBoard user={session.user} />
           </div>
         )}
@@ -117,8 +112,8 @@ export default function App() {
         <button onClick={() => setActiveTab('RANK')} className={`flex-1 max-w-[150px] py-3 rounded-xl font-bold transition-all flex items-center justify-center gap-2 ${activeTab === 'RANK' ? 'bg-cyan-500 text-slate-900 shadow-lg shadow-cyan-500/20' : 'bg-slate-800 text-slate-400'}`}><span>🏆</span> Ranking</button>
       </div>
 
-      {/* 모달들 */}
-      {isMyPageOpen && <MyStatsModal user={session.user} onClose={() => setIsMyPageOpen(false)} onUpdate={() => window.location.reload()} />}
+      {/* 모달들 (새로고침 없이 정보 업데이트하도록 수정됨) */}
+      {isMyPageOpen && <MyStatsModal user={session.user} onClose={() => setIsMyPageOpen(false)} onUpdate={() => fetchProfile(session.user.id)} />}
       {isAdminOpen && <AdminDashboard onClose={() => setIsAdminOpen(false)} />}
     </div>
   );
