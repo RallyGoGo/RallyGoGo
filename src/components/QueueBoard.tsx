@@ -12,7 +12,9 @@ type QueueItem = {
         name: string;
         ntrp: number;
         gender: string;
-        games_played_today: number; // ✨ 사라지지 않는 게임 수
+        games_played_today: number;
+        elo_men_doubles: number | null;
+        elo_women_doubles: number | null;
     } | null;
 };
 
@@ -30,16 +32,15 @@ export default function QueueBoard({ user }: { user: User }) {
     }, []);
 
     const fetchQueue = async () => {
-        // ✨ DB에서 games_played_today 정보를 같이 가져옵니다.
         const { data, error } = await supabase
             .from('queue')
             .select(`
                 *,
-                profiles (name, ntrp, gender, games_played_today)
+                profiles (name, ntrp, gender, games_played_today, elo_men_doubles, elo_women_doubles)
             `)
             .eq('is_active', true)
-            .order('priority_score', { ascending: false }) // 점수 높은 순
-            .order('created_at', { ascending: true }); // 점수 같으면 먼저 온 순
+            .order('priority_score', { ascending: false })
+            .order('created_at', { ascending: true });
 
         if (!error) setQueue(data as any || []);
         setLoading(false);
@@ -48,6 +49,13 @@ export default function QueueBoard({ user }: { user: User }) {
     const formatTime = (isoString: string) => {
         const date = new Date(isoString);
         return date.toTimeString().slice(0, 5);
+    };
+
+    // 점수 계산 (없으면 1250)
+    const getDoublesElo = (profile: any) => {
+        if (!profile) return 1250;
+        const score = profile.gender === 'Male' ? profile.elo_men_doubles : profile.elo_women_doubles;
+        return score || 1250;
     };
 
     if (loading) return <div className="text-center py-10 text-slate-500">로딩 중...</div>;
@@ -59,12 +67,11 @@ export default function QueueBoard({ user }: { user: User }) {
             </h3>
 
             {/* 헤더 */}
-            <div className="grid grid-cols-12 gap-2 text-[10px] text-slate-400 font-bold uppercase mb-2 px-2 text-center">
+            <div className="grid grid-cols-12 gap-1 text-[10px] text-slate-400 font-bold uppercase mb-2 px-2 text-center">
                 <div className="col-span-1">#</div>
-                <div className="col-span-3 text-left">이름</div>
+                <div className="col-span-5 text-left pl-1">선수 정보</div> {/* 공간 더 확보 */}
                 <div className="col-span-2">온시간</div>
                 <div className="col-span-2">갈시간</div>
-                <div className="col-span-2 text-lime-400">게임수</div>
                 <div className="col-span-2 text-yellow-400">점수</div>
             </div>
 
@@ -75,20 +82,38 @@ export default function QueueBoard({ user }: { user: User }) {
                     </div>
                 ) : (
                     queue.map((item, index) => {
-                        const profile = item.profiles || { name: '?', ntrp: 0, gender: '-', games_played_today: 0 };
+                        const profile = item.profiles || { name: '?', ntrp: 0, gender: 'Male', games_played_today: 0, elo_men_doubles: 1250, elo_women_doubles: 1250 };
                         const isMe = item.user_id === user.id;
 
+                        const isMale = profile.gender === 'Male';
+                        // 성별/점수 표시용 변수
+                        const genderBadge = isMale ? 'M' : 'F';
+                        const genderColor = isMale ? 'text-blue-300 bg-blue-900/60' : 'text-rose-300 bg-rose-900/60';
+                        const elo = getDoublesElo(profile);
+
                         return (
-                            <div key={item.id} className={`grid grid-cols-12 gap-2 items-center p-2 rounded-lg border text-center text-xs ${isMe ? 'bg-indigo-900/30 border-indigo-500/50' : 'bg-slate-900/50 border-white/5'}`}>
+                            <div key={item.id} className={`grid grid-cols-12 gap-1 items-center p-2 rounded-lg border text-center text-xs transition-all ${isMe ? 'bg-indigo-900/30 border-indigo-500/50' : 'bg-slate-900/50 border-white/5'}`}>
                                 <div className="col-span-1 font-bold text-slate-500">{index + 1}</div>
-                                <div className="col-span-3 text-left truncate font-bold text-white pl-1">
-                                    {profile.name}
+
+                                {/* ✨ 이름 & 성별 & 점수 (한 줄 또는 두 줄로 자연스럽게 표시) */}
+                                <div className="col-span-5 text-left flex flex-col pl-1 justify-center">
+                                    <span className={`font-bold truncate text-sm ${isMe ? 'text-white' : 'text-slate-200'}`}>
+                                        {profile.name}
+                                    </span>
+                                    {/* 뱃지 영역 */}
+                                    <div className="flex items-center gap-1 mt-0.5">
+                                        <span className={`px-1 rounded text-[9px] font-black ${genderColor}`}>
+                                            {genderBadge} {elo}
+                                        </span>
+                                        {/* 게임 수 뱃지 (작게 표시) */}
+                                        <span className="px-1 rounded text-[9px] bg-slate-700 text-slate-300">
+                                            {profile.games_played_today}겜
+                                        </span>
+                                    </div>
                                 </div>
-                                <div className="col-span-2 text-slate-400">{formatTime(item.created_at)}</div>
-                                <div className="col-span-2 text-slate-400">{item.departure_time}</div>
-                                <div className="col-span-2">
-                                    <span className="bg-slate-700 text-white px-1.5 py-0.5 rounded font-bold">{profile.games_played_today}</span>
-                                </div>
+
+                                <div className="col-span-2 text-slate-500">{formatTime(item.created_at)}</div>
+                                <div className="col-span-2 text-white font-bold">{item.departure_time}</div>
                                 <div className="col-span-2 font-mono text-yellow-400 font-bold">
                                     {item.priority_score?.toFixed(0) || 0}
                                 </div>
