@@ -11,6 +11,8 @@ export default function Auth() {
     const [ntrp, setNtrp] = useState('2.5');
     const [gender, setGender] = useState('Male');
 
+    const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
     // ✨ 화면에 보여질 설명 텍스트 (확인용으로 내용을 조금 더 길게 씀)
     const ntrpOptions = [
         { val: "1.0", label: "1.0 (완전 입문 - 테린이)" },
@@ -38,6 +40,7 @@ export default function Auth() {
     const handleAuth = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
+        setErrorMsg(null); // 초기화
 
         try {
             if (isSignUp) {
@@ -60,7 +63,7 @@ export default function Auth() {
                     });
 
                     if (profileError) {
-                        alert('저장 실패: ' + profileError.message);
+                        setErrorMsg('프로필 저장 실패: ' + profileError.message);
                     } else {
                         alert(`가입 성공! 시작 점수: ${initialScore}점`);
                         setIsSignUp(false);
@@ -71,7 +74,8 @@ export default function Auth() {
                 if (error) throw error;
             }
         } catch (error: any) {
-            alert(error.error_description || error.message);
+            console.error("Auth Error:", error);
+            setErrorMsg(error.error_description || error.message || "로그인 실패");
         } finally {
             setLoading(false);
         }
@@ -80,10 +84,16 @@ export default function Auth() {
     return (
         <div className="flex justify-center items-center min-h-screen bg-slate-900 p-4">
             <div className="w-full max-w-md bg-slate-800 p-8 rounded-2xl shadow-2xl border border-slate-700">
-                {/* 👇 여기가 바뀌었는지 꼭 확인하세요! (Ver 2) */}
+                {/* 👇 여기가 바뀌었는지 꼭 확인하세요! (Ver 3) */}
                 <h2 className="text-3xl font-black text-white mb-6 text-center">
-                    {isSignUp ? '✨ 회원가입 (Ver 2)' : '🎾 RallyGoGo'}
+                    {isSignUp ? '✨ 회원가입' : '🎾 RallyGoGo'}
                 </h2>
+
+                {errorMsg && (
+                    <div className="bg-rose-500/10 border border-rose-500 text-rose-500 p-3 rounded-lg text-sm font-bold mb-4 text-center animate-pulse">
+                        🚧 {errorMsg}
+                    </div>
+                )}
 
                 <form onSubmit={handleAuth} className="space-y-4">
                     <div>
@@ -112,7 +122,6 @@ export default function Auth() {
                                 </div>
                                 <div>
                                     <label className="block text-xs text-slate-400 mb-1">NTRP (실력)</label>
-                                    {/* 드롭다운 렌더링 부분 */}
                                     {/* 커스텀 선택 UI로 변경 (네이티브 select 가독성 문제 해결) */}
                                     <div className="border border-slate-600 rounded-lg overflow-hidden bg-slate-900">
                                         <div className="max-h-40 overflow-y-auto custom-scrollbar p-1 space-y-1">
@@ -138,13 +147,18 @@ export default function Auth() {
                         </div>
                     )}
 
-                    <button type="submit" disabled={loading} className="w-full bg-lime-500 hover:bg-lime-400 text-slate-900 font-bold py-3 rounded-xl transition-all mt-4">
-                        {loading ? '처리 중...' : isSignUp ? '가입하기' : '로그인'}
+                    <button type="submit" disabled={loading} className="w-full bg-lime-500 hover:bg-lime-400 text-slate-900 font-bold py-3 rounded-xl transition-all mt-4 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                        {loading ? (
+                            <>
+                                <span className="w-4 h-4 border-2 border-slate-900 border-t-transparent rounded-full animate-spin"></span>
+                                <span>로그인 중...</span>
+                            </>
+                        ) : isSignUp ? '가입하기' : '로그인'}
                     </button>
                 </form>
 
                 <div className="mt-6 text-center">
-                    <button onClick={() => setIsSignUp(!isSignUp)} className="text-sm text-slate-400 hover:text-white underline">
+                    <button onClick={() => { setIsSignUp(!isSignUp); setErrorMsg(null); }} className="text-sm text-slate-400 hover:text-white underline">
                         {isSignUp ? '이미 계정이 있나요? 로그인' : '계정이 없나요? 회원가입'}
                     </button>
                 </div>
