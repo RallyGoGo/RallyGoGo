@@ -44,8 +44,8 @@ export default function CourtBoard() {
             const { data: profiles } = await supabase.from('profiles').select('id, name').in('id', Array.from(allPlayerIds));
             const enriched = matchData.map((m: any) => ({
                 ...m,
-                p1_name: profiles?.find(p => p.id === m.player_1)?.name || 'Unknown', p2_name: profiles?.find(p => p.id === m.player_2)?.name || 'Unknown',
-                p3_name: profiles?.find(p => p.id === m.player_3)?.name || 'Unknown', p4_name: profiles?.find(p => p.id === m.player_4)?.name || 'Unknown',
+                p1_name: profiles?.find((p: any) => p.id === m.player_1)?.name || 'Unknown', p2_name: profiles?.find((p: any) => p.id === m.player_2)?.name || 'Unknown',
+                p3_name: profiles?.find((p: any) => p.id === m.player_3)?.name || 'Unknown', p4_name: profiles?.find((p: any) => p.id === m.player_4)?.name || 'Unknown',
             }));
             setActiveMatches(enriched);
         } else { setActiveMatches(matchData); }
@@ -57,13 +57,13 @@ export default function CourtBoard() {
     const getSortedQueue = async () => {
         const { data: queueData } = await supabase.from('queue').select('*');
         if (!queueData || queueData.length === 0) return [];
-        const playerIds = queueData.map(q => q.player_id);
+        const playerIds = queueData.map((q: any) => q.player_id);
         const { data: profiles } = await supabase.from('profiles').select('id, name, email, is_guest').in('id', playerIds);
         const { data: matches } = await supabase.from('matches').select('player_1, player_2, player_3, player_4').eq('status', 'FINISHED');
         const gameCounts: { [key: string]: number } = {};
-        if (matches) { matches.forEach(m => { [m.player_1, m.player_2, m.player_3, m.player_4].forEach(pid => { if (pid) gameCounts[pid] = (gameCounts[pid] || 0) + 1; }); }); }
-        const scoredQueue = queueData.map((item) => {
-            const profile = profiles?.find(p => p.id === item.player_id);
+        if (matches) { matches.forEach((m: any) => { [m.player_1, m.player_2, m.player_3, m.player_4].forEach((pid: string) => { if (pid) gameCounts[pid] = (gameCounts[pid] || 0) + 1; }); }); }
+        const scoredQueue = queueData.map((item: any) => {
+            const profile = profiles?.find((p: any) => p.id === item.player_id);
             const gamesPlayed = gameCounts[item.player_id] || 0;
             let score = item.priority_score || 2.5;
             if (gamesPlayed === 0) score += 2000; score -= (gamesPlayed * 500);
@@ -71,7 +71,7 @@ export default function CourtBoard() {
             if (profile?.is_guest) score += 300;
             return { ...item, profiles: profile, finalScore: score };
         });
-        return scoredQueue.sort((a, b) => b.finalScore - a.finalScore);
+        return scoredQueue.sort((a: any, b: any) => b.finalScore - a.finalScore);
     };
 
     const handleAutoMatch = async (courtName: string) => {
@@ -79,7 +79,7 @@ export default function CourtBoard() {
         try {
             const sortedList = await getSortedQueue();
             if (sortedList.length < 4) { alert("❌ Need 4 players!"); setLoading(false); return; }
-            const pIds = sortedList.slice(0, 4).map(p => p.player_id);
+            const pIds = sortedList.slice(0, 4).map((p: any) => p.player_id);
             const { error } = await supabase.from('matches').insert({ court_name: courtName, status: 'DRAFT', player_1: pIds[0], player_2: pIds[1], player_3: pIds[2], player_4: pIds[3] });
             if (error) throw error; await supabase.from('queue').delete().in('player_id', pIds); fetchMatches();
         } catch (e: any) { alert(e.message); } setLoading(false);
@@ -149,15 +149,15 @@ export default function CourtBoard() {
             const { data: players } = await supabase.from('profiles').select('id, gender, elo_men_doubles, elo_women_doubles, elo_mixed_doubles, elo_singles').in('id', pIds);
 
             if (players && players.length === 4) {
-                const males = players.filter(p => p.gender === 'Male').length;
+                const males = players.filter((p: any) => p.gender === 'Male').length;
                 let category = 'MIXED'; let eloField = 'elo_mixed_doubles'; let label = 'Mixed Doubles';
                 if (males === 4) { category = 'MEN_D'; eloField = 'elo_men_doubles'; label = "Men's Doubles"; }
                 else if (males === 0) { category = 'WOMEN_D'; eloField = 'elo_women_doubles'; label = "Women's Doubles"; }
 
                 if (!confirm(`Confirm: ${s1}:${s2}? \n[${label}]`)) { setLoading(false); return; }
 
-                const p1 = players.find(p => p.id === match.player_1); const p2 = players.find(p => p.id === match.player_2);
-                const p3 = players.find(p => p.id === match.player_3); const p4 = players.find(p => p.id === match.player_4);
+                const p1 = players.find((p: any) => p.id === match.player_1); const p2 = players.find((p: any) => p.id === match.player_2);
+                const p3 = players.find((p: any) => p.id === match.player_3); const p4 = players.find((p: any) => p.id === match.player_4);
 
                 const t1Avg = ((p1 as any)[eloField] + (p2 as any)[eloField]) / 2;
                 const t2Avg = ((p3 as any)[eloField] + (p4 as any)[eloField]) / 2;

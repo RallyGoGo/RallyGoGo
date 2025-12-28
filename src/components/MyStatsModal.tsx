@@ -28,6 +28,7 @@ export default function MyStatsModal({ user, onClose, onUpdate }: Props) {
     const [uploading, setUploading] = useState(false);
 
     // Stats
+    const [myProfile, setMyProfile] = useState<any>(null);
     const [bestPartner, setBestPartner] = useState<{ name: string, wins: number } | null>(null);
     const [worstRival, setWorstRival] = useState<{ name: string, losses: number } | null>(null);
     const [totalStats, setTotalStats] = useState({ wins: 0, losses: 0, winRate: 0 });
@@ -39,11 +40,12 @@ export default function MyStatsModal({ user, onClose, onUpdate }: Props) {
     const fetchMyData = async () => {
         setLoading(true);
         // 1. Load Profile
-        const { data: profile } = await supabase.from('profiles').select('name, emoji, avatar_url').eq('id', user.id).single();
+        const { data: profile } = await supabase.from('profiles').select('name, emoji, avatar_url, gender, elo_men_doubles, elo_women_doubles, elo_mixed_doubles, elo_singles').eq('id', user.id).single();
         if (profile) {
             setName(profile.name);
             setSelectedEmoji(profile.emoji || '🎾');
             setAvatarUrl(profile.avatar_url);
+            setMyProfile(profile);
         }
 
         // 2. Analyze Matches (Same logic as before)
@@ -56,7 +58,7 @@ export default function MyStatsModal({ user, onClose, onUpdate }: Props) {
             const rivalStats: { [key: string]: number } = {};
             let w = 0, l = 0;
 
-            matches.forEach(m => {
+            matches.forEach((m: any) => {
                 let myTeam = 0; let partnerId = ''; let enemies: string[] = [];
                 if (m.player_1 === user.id) { myTeam = 1; partnerId = m.player_2; enemies = [m.player_3, m.player_4]; }
                 else if (m.player_2 === user.id) { myTeam = 1; partnerId = m.player_1; enemies = [m.player_3, m.player_4]; }
@@ -222,6 +224,33 @@ export default function MyStatsModal({ user, onClose, onUpdate }: Props) {
                                         readOnly // 🔒 수정 불가
                                         className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-slate-400 cursor-not-allowed font-bold text-center"
                                     />
+
+                                    {/* Detailed Stats (Gender / ELO) */}
+                                    {myProfile && (
+                                        <div className="w-full mt-4 bg-slate-700/30 rounded-xl p-3 border border-slate-600 grid grid-cols-2 gap-2 text-xs">
+                                            <div className="col-span-2 flex justify-center mb-1">
+                                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${(myProfile.gender || '').toLowerCase() === 'male' ? 'bg-blue-900 text-blue-300' : (myProfile.gender || '').toLowerCase() === 'female' ? 'bg-rose-900 text-rose-300' : 'bg-slate-700 text-slate-400'}`}>
+                                                    {myProfile.gender || 'No Gender'}
+                                                </span>
+                                            </div>
+                                            <div className="flex justify-between px-2 py-1 bg-slate-800 rounded">
+                                                <span className="text-blue-300">Men</span>
+                                                <span className="font-mono font-bold text-white">{myProfile.elo_men_doubles || '-'}</span>
+                                            </div>
+                                            <div className="flex justify-between px-2 py-1 bg-slate-800 rounded">
+                                                <span className="text-rose-300">Women</span>
+                                                <span className="font-mono font-bold text-white">{myProfile.elo_women_doubles || '-'}</span>
+                                            </div>
+                                            <div className="flex justify-between px-2 py-1 bg-slate-800 rounded">
+                                                <span className="text-purple-300">Mixed</span>
+                                                <span className="font-mono font-bold text-white">{myProfile.elo_mixed_doubles || '-'}</span>
+                                            </div>
+                                            <div className="flex justify-between px-2 py-1 bg-slate-800 rounded">
+                                                <span className="text-emerald-300">Singles</span>
+                                                <span className="font-mono font-bold text-white">{myProfile.elo_singles || '-'}</span>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
 

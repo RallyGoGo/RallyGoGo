@@ -51,8 +51,8 @@ export default function AdminBoard({ onClose }: Props) {
             const { data: pNames } = await supabase.from('profiles').select('id, name').in('id', Array.from(pIds));
             const enriched = matches.map((m: any) => ({
                 ...m,
-                p1_name: pNames?.find(p => p.id === m.player_1)?.name || '?', p2_name: pNames?.find(p => p.id === m.player_2)?.name || '?',
-                p3_name: pNames?.find(p => p.id === m.player_3)?.name || '?', p4_name: pNames?.find(p => p.id === m.player_4)?.name || '?',
+                p1_name: pNames?.find((p: any) => p.id === m.player_1)?.name || '?', p2_name: pNames?.find((p: any) => p.id === m.player_2)?.name || '?',
+                p3_name: pNames?.find((p: any) => p.id === m.player_3)?.name || '?', p4_name: pNames?.find((p: any) => p.id === m.player_4)?.name || '?',
             }));
             setMatches(enriched);
         }

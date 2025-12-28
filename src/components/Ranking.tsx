@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import type { User } from '@supabase/supabase-js';
 import PlayerProfileModal from './PlayerProfileModal';
 
-// 프로필 타입
+// 프로필 타입 정의
 type Profile = {
     id: string; name: string | null; ntrp: number; is_guest: boolean; gender: string;
     elo_men_doubles: number | null; elo_women_doubles: number | null; elo_mixed_doubles: number | null; elo_singles: number | null;
@@ -20,7 +20,7 @@ type MatchRecord = {
 
 type RankCategory = 'MEN_D' | 'WOMEN_D' | 'MIXED' | 'SINGLES';
 
-// MVP 태그
+// MVP 투표 태그 리스트
 const MVP_TAGS = [
     { label: "🚀 강력한 불꽃 서브", icon: "🚀" }, { label: "💪 미친 포핸드", icon: "💪" },
     { label: "🛡️ 통곡의 벽 (수비)", icon: "🛡️" }, { label: "🧠 테니스 지능캐", icon: "🧠" },
@@ -29,12 +29,14 @@ const MVP_TAGS = [
 ];
 
 export default function Ranking({ user }: { user: User }) {
+    // 상태 관리
     const [activeTab, setActiveTab] = useState<'RANKING' | 'HISTORY'>('RANKING');
     const [rankCategory, setRankCategory] = useState<RankCategory>('MEN_D');
 
     const [rankings, setRankings] = useState<Profile[]>([]);
     const [history, setHistory] = useState<MatchRecord[]>([]);
     const [loading, setLoading] = useState(false);
+
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
     const [searchPlayer, setSearchPlayer] = useState('');
 
@@ -45,6 +47,7 @@ export default function Ranking({ user }: { user: User }) {
 
     const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
 
+    // 데이터 실시간 감지 및 불러오기
     useEffect(() => {
         setRankings([]);
         fetchData();
@@ -58,6 +61,7 @@ export default function Ranking({ user }: { user: User }) {
         setLoading(true);
         try {
             if (activeTab === 'RANKING') {
+                // 랭킹 데이터 가져오기
                 let sortField = 'elo_men_doubles';
                 if (rankCategory === 'WOMEN_D') sortField = 'elo_women_doubles';
                 else if (rankCategory === 'MIXED') sortField = 'elo_mixed_doubles';
@@ -71,7 +75,8 @@ export default function Ranking({ user }: { user: User }) {
 
                 if (error) throw error;
 
-                const cleanProfiles = (profiles || []).filter(p => {
+                // 필터링 (점수 0점 제외, 성별 체크, 검색어 체크)
+                const cleanProfiles = (profiles || []).filter((p: any) => {
                     let rawScore = 0;
                     if (rankCategory === 'MEN_D') rawScore = p.elo_men_doubles || 0;
                     else if (rankCategory === 'WOMEN_D') rawScore = p.elo_women_doubles || 0;
@@ -89,6 +94,7 @@ export default function Ranking({ user }: { user: User }) {
 
                 setRankings(cleanProfiles);
             } else {
+                // 경기 기록 가져오기
                 const startOfDay = `${selectedDate}T00:00:00`;
                 const endOfDay = `${selectedDate}T23:59:59`;
                 const { data: matches } = await supabase.from('matches').select('*').eq('status', 'FINISHED').gte('end_time', startOfDay).lte('end_time', endOfDay).order('end_time', { ascending: false });
@@ -100,15 +106,15 @@ export default function Ranking({ user }: { user: User }) {
                         if (m.player_3) pIds.add(m.player_3); if (m.player_4) pIds.add(m.player_4);
                     });
                     const { data: pNames } = await supabase.from('profiles').select('id, name').in('id', Array.from(pIds));
-                    const { data: myVotes } = await supabase.from('mvp_votes').select('match_id, target_id').eq('voter_id', user.id).in('match_id', matches.map(m => m.id));
+                    const { data: myVotes } = await supabase.from('mvp_votes').select('match_id, target_id').eq('voter_id', user.id).in('match_id', matches.map((m: any) => m.id));
 
                     const formattedHistory = matches.map((m: any) => ({
                         ...m,
-                        p1_name: pNames?.find(p => p.id === m.player_1)?.name || 'Unknown',
-                        p2_name: pNames?.find(p => p.id === m.player_2)?.name || 'Unknown',
-                        p3_name: pNames?.find(p => p.id === m.player_3)?.name || 'Unknown',
-                        p4_name: pNames?.find(p => p.id === m.player_4)?.name || 'Unknown',
-                        my_vote: myVotes?.find(v => v.match_id === m.id)?.target_id
+                        p1_name: pNames?.find((p: any) => p.id === m.player_1)?.name || 'Unknown',
+                        p2_name: pNames?.find((p: any) => p.id === m.player_2)?.name || 'Unknown',
+                        p3_name: pNames?.find((p: any) => p.id === m.player_3)?.name || 'Unknown',
+                        p4_name: pNames?.find((p: any) => p.id === m.player_4)?.name || 'Unknown',
+                        my_vote: myVotes?.find((v: any) => v.match_id === m.id)?.target_id
                     }));
                     setHistory(formattedHistory);
                 } else { setHistory([]); }
@@ -116,6 +122,7 @@ export default function Ranking({ user }: { user: User }) {
         } catch (e) { console.error(e); } finally { setLoading(false); }
     };
 
+    // 현재 카테고리에 맞는 점수 반환
     const getScore = (p: Profile) => {
         if (rankCategory === 'MEN_D') return p.elo_men_doubles || 0;
         if (rankCategory === 'WOMEN_D') return p.elo_women_doubles || 0;
@@ -123,15 +130,16 @@ export default function Ranking({ user }: { user: User }) {
         return p.elo_mixed_doubles || 0;
     };
 
+    // MVP 투표 관련 함수들
     const openVoteModal = (match: MatchRecord) => { setVoteTargetMatch(match); setVoteCandidate(null); setVoteTag(""); setIsVoteModalOpen(true); };
     const submitVote = async () => { if (!voteTargetMatch || !voteCandidate || !voteTag) return alert("Select Player & Tag!"); try { const { error } = await supabase.from('mvp_votes').insert({ match_id: voteTargetMatch.id, voter_id: user.id, target_id: voteCandidate, tag: voteTag }); if (error) throw error; alert("👑 투표 완료!"); setIsVoteModalOpen(false); fetchData(); } catch (e: any) { alert("Error!"); } };
     const getVoteCandidates = () => { if (!voteTargetMatch) return []; const isTeam1Win = voteTargetMatch.winner_team === 'TEAM_1'; const winners = isTeam1Win ? [{ id: voteTargetMatch.player_1, name: voteTargetMatch.p1_name }, { id: voteTargetMatch.player_2, name: voteTargetMatch.p2_name }] : [{ id: voteTargetMatch.player_3, name: voteTargetMatch.p3_name }, { id: voteTargetMatch.player_4, name: voteTargetMatch.p4_name }]; return winners.filter(p => p.id && p.id !== user.id); };
 
-    // ✨ 1~3등
+    // ✨ 데이터 슬라이싱 (1~3등 / 4~10등)
     const top3 = rankings.slice(0, 3);
-    // ✨ 4~10등까지만 자르기
     const restOfRankings = rankings.slice(3, 10);
 
+    // 단상 카드 렌더링 함수
     const renderPodiumCard = (player: Profile | undefined, rank: number, styles: any) => {
         if (!player) return <div className="flex-1"></div>;
         return (
@@ -148,6 +156,7 @@ export default function Ranking({ user }: { user: User }) {
 
     return (
         <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-4 h-full flex flex-col relative animate-fadeIn">
+            {/* 상단 탭 및 검색 */}
             <div className="flex flex-col gap-3 mb-4 border-b border-white/10 pb-2 shrink-0">
                 <div className="flex gap-4">
                     <button onClick={() => setActiveTab('RANKING')} className={`text-lg font-bold pb-2 transition-all ${activeTab === 'RANKING' ? 'text-lime-400 border-b-2 border-lime-400' : 'text-slate-400 hover:text-white'}`}>🏆 랭킹</button>
@@ -160,6 +169,7 @@ export default function Ranking({ user }: { user: User }) {
             <div className="flex-1 overflow-y-auto pr-1 custom-scrollbar">
                 {loading ? <div className="text-center text-slate-500 py-10">로딩 중...</div> : activeTab === 'RANKING' ? (
                     <>
+                        {/* 카테고리 선택 버튼 */}
                         <div className="flex gap-1 mb-4 bg-slate-900/50 p-1 rounded-lg inline-flex self-center">
                             {['MEN_D', 'WOMEN_D', 'MIXED', 'SINGLES'].map(cat => (
                                 <button key={cat} onClick={() => setRankCategory(cat as any)} className={`px-2 py-1 text-[10px] rounded font-bold transition-all ${rankCategory === cat ? 'bg-slate-600 text-white shadow' : 'text-slate-400'}`}>
@@ -167,12 +177,14 @@ export default function Ranking({ user }: { user: User }) {
                                 </button>
                             ))}
                         </div>
+
+                        {/* 단상 (TOP 3) */}
                         {top3.length > 0 ? (
                             <div className="flex items-end justify-center gap-2 mb-6 px-2 min-h-[160px]">
                                 {/* 2등 */}
                                 {renderPodiumCard(top3[1], 2, { mt: '', scale: 'z-10', badge: 'bg-slate-400 text-slate-900', cardBorder: 'border-slate-500', cardShadow: 'shadow-lg' })}
 
-                                {/* 1등: mb-12로 수정 (적당한 높이) */}
+                                {/* 1등: mb-12로 적절하게 올림 */}
                                 {renderPodiumCard(top3[0], 1, { mt: 'mb-12', scale: 'scale-110 z-20', badge: 'bg-yellow-400 text-yellow-900', cardBorder: 'border-yellow-500', cardShadow: 'shadow-xl shadow-yellow-500/20' })}
 
                                 {/* 3등 */}
@@ -184,6 +196,8 @@ export default function Ranking({ user }: { user: User }) {
                                 <p>{rankCategory === 'WOMEN_D' ? '여성 랭킹 데이터가 없습니다.' : '랭킹 데이터가 없습니다.'}</p>
                             </div>
                         )}
+
+                        {/* 랭킹 리스트 (4위 ~ 10위) */}
                         <div className="space-y-2">
                             {restOfRankings.map((player, idx) => (
                                 <div key={player.id} onClick={() => setSelectedProfileId(player.id)} className="flex items-center justify-between p-3 rounded-xl border border-slate-700 bg-slate-800/50 cursor-pointer hover:bg-slate-700/50">
@@ -195,7 +209,7 @@ export default function Ranking({ user }: { user: User }) {
                                 </div>
                             ))}
                         </div>
-                        {/* 10위까지만 보여주고 그 뒤에 데이터가 더 있으면 ... 표시 */}
+                        {/* 10위 제한 안내 메시지 */}
                         {rankings.length > 10 && (
                             <div className="text-center py-4 text-xs text-slate-500">
                                 ... 상위 10명만 표시됩니다 ...
@@ -203,6 +217,7 @@ export default function Ranking({ user }: { user: User }) {
                         )}
                     </>
                 ) : (
+                    // 경기 기록 탭
                     <div className="space-y-3 pb-20">
                         {history.length === 0 ? <div className="text-center py-10 opacity-50">기록이 없습니다.</div> : history.map((match) => (
                             <div key={match.id} className="bg-slate-900/50 p-4 rounded-xl border border-white/5">
@@ -222,6 +237,7 @@ export default function Ranking({ user }: { user: User }) {
                 )}
             </div>
 
+            {/* 투표 모달 */}
             {isVoteModalOpen && voteTargetMatch && (
                 <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
                     <div className="bg-slate-800 border border-slate-600 rounded-2xl w-full max-w-sm p-6 shadow-2xl relative">
@@ -236,6 +252,7 @@ export default function Ranking({ user }: { user: User }) {
                 </div>
             )}
 
+            {/* 프로필 모달 */}
             {selectedProfileId && <PlayerProfileModal playerId={selectedProfileId} onClose={() => setSelectedProfileId(null)} />}
         </div>
     );

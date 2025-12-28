@@ -50,7 +50,7 @@ export default function Lobby() {
 
                 {/* Left Column: Queue Board */}
                 <div className="w-full">
-                    <QueueBoard user={user} />
+                    {user && <QueueBoard user={user} />}
                 </div>
 
                 {/* Right Column: Active Courts */}

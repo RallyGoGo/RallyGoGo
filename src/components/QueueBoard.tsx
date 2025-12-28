@@ -22,15 +22,6 @@ export default function QueueBoard({ user }: { user: User }) {
     const [queue, setQueue] = useState<QueueItem[]>([]);
     const [loading, setLoading] = useState(true);
 
-    useEffect(() => {
-        fetchQueue();
-        const channel = supabase
-            .channel('queue_realtime')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'queue' }, () => fetchQueue())
-            .subscribe();
-        return () => { supabase.removeChannel(channel); };
-    }, []);
-
     const fetchQueue = async () => {
         const { data, error } = await supabase
             .from('queue')
@@ -46,6 +37,15 @@ export default function QueueBoard({ user }: { user: User }) {
         setLoading(false);
     };
 
+    useEffect(() => {
+        fetchQueue();
+        const channel = supabase
+            .channel('queue_realtime')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'queue' }, () => fetchQueue())
+            .subscribe();
+        return () => { supabase.removeChannel(channel); };
+    }, []);
+
     const formatTime = (isoString: string) => {
         const date = new Date(isoString);
         return date.toTimeString().slice(0, 5);
@@ -54,7 +54,7 @@ export default function QueueBoard({ user }: { user: User }) {
     // 점수 계산 (없으면 1250)
     const getDoublesElo = (profile: any) => {
         if (!profile) return 1250;
-        const score = profile.gender === 'Male' ? profile.elo_men_doubles : profile.elo_women_doubles;
+        const score = (profile.gender || '').toLowerCase() === 'male' ? profile.elo_men_doubles : profile.elo_women_doubles;
         return score || 1250;
     };
 
@@ -69,7 +69,7 @@ export default function QueueBoard({ user }: { user: User }) {
             {/* 헤더 */}
             <div className="grid grid-cols-12 gap-1 text-[10px] text-slate-400 font-bold uppercase mb-2 px-2 text-center">
                 <div className="col-span-1">#</div>
-                <div className="col-span-5 text-left pl-1">선수 정보</div> {/* 공간 더 확보 */}
+                <div className="col-span-5 text-left pl-1">선수 정보</div>
                 <div className="col-span-2">온시간</div>
                 <div className="col-span-2">갈시간</div>
                 <div className="col-span-2 text-yellow-400">점수</div>
@@ -85,8 +85,7 @@ export default function QueueBoard({ user }: { user: User }) {
                         const profile = item.profiles || { name: '?', ntrp: 0, gender: 'Male', games_played_today: 0, elo_men_doubles: 1250, elo_women_doubles: 1250 };
                         const isMe = item.user_id === user.id;
 
-                        const isMale = profile.gender === 'Male';
-                        // 성별/점수 표시용 변수
+                        const isMale = (profile.gender || '').toLowerCase() === 'male';
                         const genderBadge = isMale ? 'M' : 'F';
                         const genderColor = isMale ? 'text-blue-300 bg-blue-900/60' : 'text-rose-300 bg-rose-900/60';
                         const elo = getDoublesElo(profile);
@@ -95,17 +94,14 @@ export default function QueueBoard({ user }: { user: User }) {
                             <div key={item.id} className={`grid grid-cols-12 gap-1 items-center p-2 rounded-lg border text-center text-xs transition-all ${isMe ? 'bg-indigo-900/30 border-indigo-500/50' : 'bg-slate-900/50 border-white/5'}`}>
                                 <div className="col-span-1 font-bold text-slate-500">{index + 1}</div>
 
-                                {/* ✨ 이름 & 성별 & 점수 (한 줄 또는 두 줄로 자연스럽게 표시) */}
-                                <div className="col-span-5 text-left flex flex-col pl-1 justify-center">
-                                    <span className={`font-bold truncate text-sm ${isMe ? 'text-white' : 'text-slate-200'}`}>
+                                <div className="col-span-5 text-left flex items-center gap-2 pl-1">
+                                    <span className={`font-bold truncate text-sm max-w-[80px] ${isMe ? 'text-white' : 'text-slate-200'}`}>
                                         {profile.name}
                                     </span>
-                                    {/* 뱃지 영역 */}
-                                    <div className="flex items-center gap-1 mt-0.5">
+                                    <div className="flex items-center gap-1">
                                         <span className={`px-1 rounded text-[9px] font-black ${genderColor}`}>
                                             {genderBadge} {elo}
                                         </span>
-                                        {/* 게임 수 뱃지 (작게 표시) */}
                                         <span className="px-1 rounded text-[9px] bg-slate-700 text-slate-300">
                                             {profile.games_played_today}겜
                                         </span>

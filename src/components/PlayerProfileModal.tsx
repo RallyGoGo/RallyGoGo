@@ -56,7 +56,7 @@ export default function PlayerProfileModal({ playerId, onClose }: Props) {
             const { data: matches } = await supabase.from('matches').select('winner_team, player_1, player_2, player_3, player_4').eq('status', 'FINISHED').or(`player_1.eq.${playerId},player_2.eq.${playerId},player_3.eq.${playerId},player_4.eq.${playerId}`);
             if (matches) {
                 let w = 0, l = 0;
-                matches.forEach(m => {
+                matches.forEach((m: any) => {
                     const isTeam1 = (m.player_1 === playerId || m.player_2 === playerId);
                     if (m.winner_team === 'DRAW') return;
                     if ((isTeam1 && m.winner_team === 'TEAM_1') || (!isTeam1 && m.winner_team === 'TEAM_2')) w++; else l++;
@@ -67,7 +67,7 @@ export default function PlayerProfileModal({ playerId, onClose }: Props) {
             const { data: votes } = await supabase.from('mvp_votes').select('tag').eq('target_id', playerId);
             if (votes) {
                 const counts: { [key: string]: number } = {};
-                votes.forEach(v => { counts[v.tag] = (counts[v.tag] || 0) + 1; });
+                votes.forEach((v: any) => { counts[v.tag] = (counts[v.tag] || 0) + 1; });
                 setMvpTags(Object.entries(counts).map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count));
             }
 
@@ -84,8 +84,9 @@ export default function PlayerProfileModal({ playerId, onClose }: Props) {
     // 🔥 GENDER FILTER HELPER
     const getDisplayScore = (score: number, type: 'MEN' | 'WOMEN') => {
         if (!profile?.gender) return score; // Gender not set, show all
-        if (profile.gender === 'Male' && type === 'WOMEN') return '---';
-        if (profile.gender === 'Female' && type === 'MEN') return '---';
+        const g = (profile.gender || '').toLowerCase();
+        if (g === 'male' && type === 'WOMEN') return '---';
+        if (g === 'female' && type === 'MEN') return '---';
         return score;
     };
 
@@ -111,7 +112,7 @@ export default function PlayerProfileModal({ playerId, onClose }: Props) {
                             <h2 className="text-2xl font-black text-white">{profile.name}</h2>
                             <p className="text-sm text-slate-400 font-bold mb-6 flex items-center gap-2">
                                 {profile.is_guest ? 'GUEST PLAYER' : 'OFFICIAL MEMBER'}
-                                {profile.gender && <span className={`text-[10px] px-1.5 rounded ${profile.gender === 'Male' ? 'bg-blue-500/20 text-blue-400' : 'bg-rose-500/20 text-rose-400'}`}>{profile.gender}</span>}
+                                {profile.gender && <span className={`text-[10px] px-1.5 rounded ${(profile.gender).toLowerCase() === 'male' ? 'bg-blue-500/20 text-blue-400' : 'bg-rose-500/20 text-rose-400'}`}>{profile.gender}</span>}
                             </p>
 
                             <div className="w-full mb-6">
@@ -127,11 +128,11 @@ export default function PlayerProfileModal({ playerId, onClose }: Props) {
 
                             {/* ELO Current (Filtered by Gender) */}
                             <div className="w-full bg-slate-700/30 rounded-xl p-3 mb-6 border border-slate-600 grid grid-cols-2 gap-2">
-                                <div className={`flex justify-between px-2 py-1 bg-slate-800 rounded ${profile.gender === 'Female' ? 'opacity-30' : ''}`}>
+                                <div className={`flex justify-between px-2 py-1 bg-slate-800 rounded ${(profile.gender || '').toLowerCase() === 'female' ? 'opacity-30' : ''}`}>
                                     <span className="text-[10px] text-blue-300">Men</span>
                                     <span className="font-mono text-sm font-bold">{getDisplayScore(profile.elo_men_doubles, 'MEN')}</span>
                                 </div>
-                                <div className={`flex justify-between px-2 py-1 bg-slate-800 rounded ${profile.gender === 'Male' ? 'opacity-30' : ''}`}>
+                                <div className={`flex justify-between px-2 py-1 bg-slate-800 rounded ${(profile.gender || '').toLowerCase() === 'male' ? 'opacity-30' : ''}`}>
                                     <span className="text-[10px] text-rose-300">Women</span>
                                     <span className="font-mono text-sm font-bold">{getDisplayScore(profile.elo_women_doubles, 'WOMEN')}</span>
                                 </div>
