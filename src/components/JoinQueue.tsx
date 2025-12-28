@@ -21,51 +21,95 @@ export default function JoinQueue({ user, profile }: JoinQueueProps) {
     }, [user]);
 
     const checkMyQueue = async () => {
-        // DB에서 내 대기 상태 확인
-        const { data } = await supabase.from('queue').select('id, departure_time').eq('user_id', user.id).eq('is_active', true).maybeSingle();
+        try {
+            const { data } = await supabase
+                .from('queue')
+                .select('id, departure_time')
+                .eq('user_id', user.id)
+                .eq('is_active', true)
+                .maybeSingle();
 
-        if (data) {
-            setMyQueueId(data.id);
-            // 수정 모드가 아닐 때만 DB 시간으로 덮어씀 (내가 수정 중일 땐 건드리지 않음!)
-            if (!isEditing) setDepartureTime(data.departure_time);
-        } else {
-            setMyQueueId(null);
-            // 🚨 중요 수정: DB에 내 데이터가 없다고 해서 입력 중인 시간을 맘대로 지우지 않음!
-            // 오직 명시적으로 취소하거나 등록했을 때만 지움.
+            if (data) {
+                setMyQueueId(data.id);
+                if (!isEditing) {
+                    setDepartureTime(data.departure_time);
+                }
+            } else {
+                setMyQueueId(null);
+                if (!isEditing) setDepartureTime('');
+            }
+        } catch (err) {
+            console.error("Queue Check Error:", err);
         }
     };
 
     const handleJoinOrUpdate = async () => {
-        if (!profile) return alert("프로필 정보를 먼저 설정해주세요.");
         if (!departureTime) return alert("시간을 입력해주세요!");
 
         setLoading(true);
         try {
             if (myQueueId) {
-                // [시간 수정]
-                const { error } = await supabase.from('queue').update({
-                    departure_time: departureTime
-                }).eq('id', myQueueId);
+                // ✅ [수정 모드] : 시간만 업데이트 (점수 유지)
+                const { error } = await supabase
+                    .from('queue')
+                    .update({ departure_time: departureTime })
+                    .eq('id', myQueueId);
+
                 if (error) throw error;
                 alert("시간이 수정되었습니다! 🕒");
                 setIsEditing(false);
-            } else {
-                // [신규 등록]
-                const gamesPlayed = profile.games_played_today || 0;
-                const initialScore = 1000 - (gamesPlayed * 100);
 
+            } else {
+                // ✅ [신규 등록] : 스마트 우선순위 점수 계산 로직 적용
+
+                // 1. 오늘 게임 수 최신 조회
+                const { data: freshProfile } = await supabase
+                    .from('profiles')
+                    .select('games_played_today')
+                    .eq('id', user.id)
+                    .single();
+
+                const gamesPlayed = freshProfile?.games_played_today || 0;
+
+                // 2. 기본 점수 계산 (1000 - 게임수*100)
+                let calculatedScore = 1000 - (gamesPlayed * 100);
+
+                // 🌟 3. [뉴비 버프] 아직 한 게임도 안 했으면 +50점
+                if (gamesPlayed === 0) {
+                    calculatedScore += 50;
+                }
+
+                // 🌟 4. [막차 버프] 갈 시간이 40분 이내로 남았으면 +70점
+                const now = new Date();
+                const [targetH, targetM] = departureTime.split(':').map(Number);
+                const targetDate = new Date();
+                targetDate.setHours(targetH, targetM, 0, 0);
+
+                // 만약 입력한 시간이 현재 시간보다 이전이면 '내일'로 간주 (새벽반 등 고려)
+                if (targetDate < now) {
+                    targetDate.setDate(targetDate.getDate() + 1);
+                }
+
+                const diffMs = targetDate.getTime() - now.getTime();
+                const diffMins = diffMs / (1000 * 60);
+
+                if (diffMins > 0 && diffMins <= 40) {
+                    calculatedScore += 70; // 막차 보너스
+                }
+
+                // 5. 최종 등록
                 const { error } = await supabase.from('queue').insert({
                     user_id: user.id,
                     departure_time: departureTime,
                     game_type: 'MATCH',
                     is_active: true,
-                    priority_score: initialScore
+                    priority_score: calculatedScore // ✨ 최종 점수
                 });
+
                 if (error) throw error;
                 alert("대기열에 등록되었습니다! 🚀");
             }
-            // 등록 후 상태 확인
-            checkMyQueue();
+            await checkMyQueue();
         } catch (error: any) {
             alert("오류 발생: " + error.message);
         } finally {
@@ -78,19 +122,21 @@ export default function JoinQueue({ user, profile }: JoinQueueProps) {
         if (!confirm("정말 대기를 취소하시겠습니까?")) return;
 
         setLoading(true);
-        await supabase.from('queue').delete().eq('id', myQueueId);
-
-        // 취소했을 때만 확실하게 상태 초기화
-        setMyQueueId(null);
-        setDepartureTime('');
-        setIsEditing(false);
-        setLoading(false);
+        try {
+            await supabase.from('queue').delete().eq('id', myQueueId);
+            setMyQueueId(null);
+            setDepartureTime('');
+            setIsEditing(false);
+        } catch (error) {
+            console.error("Cancel Error:", error);
+        } finally {
+            setLoading(false);
+        }
     };
 
     const setQuickTime = (minutes: number) => {
         const date = new window.Date();
         date.setMinutes(date.getMinutes() + minutes);
-        // 버튼 누르면 즉시 입력창에 반영
         setDepartureTime(date.toTimeString().slice(0, 5));
     };
 
@@ -144,7 +190,7 @@ export default function JoinQueue({ user, profile }: JoinQueueProps) {
 
                     <div className="flex gap-2">
                         {isEditing && (
-                            <button onClick={() => setIsEditing(false)} className="flex-1 bg-slate-700 text-white rounded-xl font-bold">취소</button>
+                            <button onClick={() => { setIsEditing(false); checkMyQueue(); }} className="flex-1 bg-slate-700 text-white rounded-xl font-bold">취소</button>
                         )}
                         <button
                             onClick={handleJoinOrUpdate}
