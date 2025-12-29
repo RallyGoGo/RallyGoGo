@@ -52,7 +52,7 @@ export default function Ranking({ user }: { user: User }) {
         setRankings([]);
         fetchData();
         const sub = supabase.channel('ranking_updates')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, () => fetchData())
+            .on('postgres_changes', { event: '*', schema: 'public' }, () => fetchData()) // Listen to all changes (matches, mvp_votes, etc)
             .subscribe();
         return () => { supabase.removeChannel(sub); };
     }, [rankCategory, selectedDate, activeTab]);
@@ -85,9 +85,11 @@ export default function Ranking({ user }: { user: User }) {
 
                     if (rawScore <= 0) return false;
 
-                    const gender = (p.gender || '').trim().toLowerCase();
-                    if (rankCategory === 'MEN_D' && gender !== 'male') return false;
-                    if (rankCategory === 'WOMEN_D' && gender !== 'female') return false;
+                    const normalizeGender = (g: string) => (g || '').trim().toLowerCase().startsWith('m') ? 'Male' : 'Female';
+                    const profileGender = normalizeGender(p.gender);
+
+                    if (rankCategory === 'MEN_D' && profileGender !== 'Male') return false;
+                    if (rankCategory === 'WOMEN_D' && profileGender !== 'Female') return false;
 
                     return (p.name || 'Unknown').toLowerCase().includes(searchPlayer.toLowerCase());
                 });
