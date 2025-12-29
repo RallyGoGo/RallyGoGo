@@ -96,7 +96,7 @@ export default function App() {
         {activeTab === 'PLAY' ? (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             <div className="order-1 lg:col-span-4 lg:order-1"><JoinQueue user={session.user} profile={profile} /></div>
-            <div className="order-2 lg:col-span-8 lg:order-2 lg:row-span-2"><CourtBoard /></div>
+            <div className="order-2 lg:col-span-8 lg:order-2 lg:row-span-2"><CourtBoard user={session.user} /></div>
             <div className="order-3 lg:col-span-4 lg:order-3"><QueueBoard user={session.user} /></div>
           </div>
         ) : (

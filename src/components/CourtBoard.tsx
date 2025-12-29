@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
+// V8.3 매칭 엔진 적용
+import { calculatePriorityScore, generateV83Match } from '../services/matchingSystem';
+// 검증 시스템 적용
+import { reportMatchResult, confirmMatchResult, rejectMatchResult } from '../services/matchVerification';
 
+// [Fix 3] 타입 정의를 실제 데이터 구조와 일치시킴
 type QueueCandidate = {
     player_id: string;
     priority_score: number;
@@ -10,14 +15,14 @@ type QueueCandidate = {
         name: string;
         gender: string;
         is_guest?: boolean;
-        elo_men_doubles: number;
-        elo_women_doubles: number;
-        elo_mixed_doubles: number;
-    };
+        elo_men_doubles?: number;
+        elo_women_doubles?: number;
+        elo_mixed_doubles?: number;
+    } | null; // profiles가 없을 수도 있음 (null safe)
     finalScore: number;
 };
 
-export default function CourtBoard() {
+export default function CourtBoard({ user }: { user: any }) {
     const [courts, setCourts] = useState<string[]>(['Court A', 'Court B']);
     const [activeMatches, setActiveMatches] = useState<any[]>([]);
     const [loading, setLoading] = useState(false);
@@ -42,69 +47,71 @@ export default function CourtBoard() {
         return () => { supabase.removeChannel(channel); };
     }, []);
 
+    // [Fix 1] fetchMatches: 프로필 이름 매핑 로직 강화 (Data Loss 방지)
     const fetchMatches = async () => {
-        const { data: matchData } = await supabase.from('matches').select('*').neq('status', 'FINISHED');
+        const { data: matchData } = await supabase
+            .from('matches')
+            .select('*')
+            .neq('status', 'FINISHED');
+        // .neq('status', 'completed'); // 완료된 경기도 잠시 보여주고 싶다면 주석 처리
+
         if (!matchData) return;
 
         const allPlayerIds = new Set<string>();
         matchData.forEach((m: any) => {
-            if (m.player_1) allPlayerIds.add(m.player_1); if (m.player_2) allPlayerIds.add(m.player_2);
-            if (m.player_3) allPlayerIds.add(m.player_3); if (m.player_4) allPlayerIds.add(m.player_4);
+            if (m.player_1) allPlayerIds.add(m.player_1);
+            if (m.player_2) allPlayerIds.add(m.player_2);
+            if (m.player_3) allPlayerIds.add(m.player_3);
+            if (m.player_4) allPlayerIds.add(m.player_4);
         });
 
         if (allPlayerIds.size > 0) {
-            const { data: profiles } = await supabase.from('profiles').select('id, name').in('id', Array.from(allPlayerIds));
+            const { data: profiles } = await supabase
+                .from('profiles')
+                .select('id, name')
+                .in('id', Array.from(allPlayerIds));
+
+            // Map을 사용하여 O(1) 조회 속도 확보
+            const profileMap = new Map(profiles?.map((p: any) => [p.id, p.name]));
+
             const enriched = matchData.map((m: any) => ({
                 ...m,
-                p1_name: profiles?.find((p: any) => p.id === m.player_1)?.name || 'Unknown',
-                p2_name: profiles?.find((p: any) => p.id === m.player_2)?.name || 'Unknown',
-                p3_name: profiles?.find((p: any) => p.id === m.player_3)?.name || 'Unknown',
-                p4_name: profiles?.find((p: any) => p.id === m.player_4)?.name || 'Unknown',
+                p1_name: profileMap.get(m.player_1) || 'Unknown',
+                p2_name: profileMap.get(m.player_2) || 'Unknown',
+                p3_name: profileMap.get(m.player_3) || 'Unknown',
+                p4_name: profileMap.get(m.player_4) || 'Unknown',
             }));
             setActiveMatches(enriched);
-        } else { setActiveMatches(matchData); }
+        } else {
+            setActiveMatches(matchData);
+        }
     };
 
     const handleAddCourt = () => { const nextChar = String.fromCharCode(65 + courts.length); setCourts([...courts, `Court ${nextChar}`]); };
     const handleRemoveCourt = (courtName: string) => { if (activeMatches.find(m => m.court_name === courtName)) { alert("❌ Court busy!"); return; } if (confirm(`🗑️ Remove ${courtName}?`)) setCourts(prev => prev.filter(c => c !== courtName)); };
 
-    // ✨ [핵심] 스마트 정렬 로직 (QueueBoard와 동일한 로직 + ELO 데이터 포함)
+    // ✨ [V8.2] 스마트 정렬 로직 (Service 위임)
     const getSmartSortedQueue = async () => {
         const { data: queueData } = await supabase
             .from('queue')
             .select(`
                 *,
-                profiles (name, gender, is_guest, elo_men_doubles, elo_women_doubles, elo_mixed_doubles)
+                profiles (name, gender, is_guest, elo_men_doubles, elo_women_doubles, elo_mixed_doubles, games_played_today, ntrp)
             `)
             .eq('is_active', true);
 
         if (!queueData || queueData.length === 0) return [];
 
-        const now = new Date();
+        // V8.2 점수 계산
+        const scoredQueue = queueData.map((item: any) => ({
+            ...item,
+            finalScore: calculatePriorityScore(item)
+        }));
 
-        const scoredQueue = queueData.map((item: any) => {
-            let score = item.priority_score; // 기본 점수 (게임수 + 뉴비버프 포함)
-
-            // 막차 버프 계산 (+70점)
-            if (item.departure_time) {
-                const [targetH, targetM] = item.departure_time.split(':').map(Number);
-                const targetDate = new Date();
-                targetDate.setHours(targetH, targetM, 0, 0);
-                if (targetDate < now) targetDate.setDate(targetDate.getDate() + 1);
-
-                const diffMins = (targetDate.getTime() - now.getTime()) / (1000 * 60);
-                if (diffMins > 0 && diffMins <= 40) {
-                    score += 70;
-                }
-            }
-            return { ...item, finalScore: score };
-        });
-
-        // 점수 높은 순 정렬
         return scoredQueue.sort((a: any, b: any) => b.finalScore - a.finalScore);
     };
 
-    // ✨ [핵심] 자동 매칭 알고리즘 (성별 분리 + ELO 밸런싱)
+    // ✨ [V8.3] 자동 매칭 엔진 (Service 위임)
     const handleAutoMatch = async (courtName: string) => {
         if (loading) return;
         if (activeMatches.find(m => m.court_name === courtName)) { alert("❌ Court busy!"); return; }
@@ -112,67 +119,33 @@ export default function CourtBoard() {
         setLoading(true);
         try {
             const sortedList = await getSmartSortedQueue();
-            if (sortedList.length < 4) { alert("❌ Need at least 4 players!"); setLoading(false); return; }
 
-            // 1. 상위 12명(후보군) 추출
-            const candidates = sortedList.slice(0, 12);
+            // V8.3 매칭 엔진 호출
+            const matchResult = generateV83Match(sortedList);
 
-            let selectedPlayers: any[] = [];
-            let matchType = 'MIXED';
-
-            // 2. 성별 분석
-            const females = candidates.filter((p: any) => (p.profiles.gender || '').toLowerCase() === 'female');
-            const males = candidates.filter((p: any) => (p.profiles.gender || '').toLowerCase() === 'male');
-
-            // 3. 우선순위: 여복 -> 남복 -> 혼복/잔여
-            if (females.length >= 4) {
-                // 여복 매칭
-                selectedPlayers = females.slice(0, 4);
-                matchType = 'WOMEN_D';
-            } else if (males.length >= 4) {
-                // 남복 매칭
-                selectedPlayers = males.slice(0, 4);
-                matchType = 'MEN_D';
-            } else {
-                // 인원수 부족 시 그냥 상위 4명 (혼복 등)
-                selectedPlayers = sortedList.slice(0, 4);
-                matchType = 'MIXED';
+            if (!matchResult) {
+                alert("❌ 매칭 실패: 인원이 부족하거나 조건에 맞는 조합이 없습니다.");
+                setLoading(false);
+                return;
             }
 
-            // 4. 팀 밸런싱 (ELO 순으로 정렬해서 1+4 vs 2+3 배정)
-            // 해당 종목 점수 기준으로 정렬
-            selectedPlayers.sort((a: any, b: any) => {
-                const scoreA = matchType === 'MEN_D' ? a.profiles.elo_men_doubles : matchType === 'WOMEN_D' ? a.profiles.elo_women_doubles : a.profiles.elo_mixed_doubles;
-                const scoreB = matchType === 'MEN_D' ? b.profiles.elo_men_doubles : matchType === 'WOMEN_D' ? b.profiles.elo_women_doubles : b.profiles.elo_mixed_doubles;
-                return (scoreB || 1250) - (scoreA || 1250);
-            });
+            const { matchType, team1, team2, playerIds } = matchResult;
 
-            // Team 1: 1등 & 4등 (강+약)
-            // Team 2: 2등 & 3등 (중+중) -> 가장 밸런스 좋은 조합!
-            const team1 = [selectedPlayers[0], selectedPlayers[3]];
-            const team2 = [selectedPlayers[1], selectedPlayers[2]];
-
-            // 혹시 4등이 없으면(인원 부족) 에러 방지
-            const pIds = [
-                team1[0]?.player_id, team1[1]?.player_id,
-                team2[0]?.player_id, team2[1]?.player_id
-            ].filter(Boolean);
-
-            if (pIds.length < 4) { alert("❌ Not enough players for balancing."); setLoading(false); return; }
+            console.log(`[V8.3] Match Generated: ${matchType}`, { team1, team2 });
 
             // 5. 매치 생성
             const { error } = await supabase.from('matches').insert({
                 court_name: courtName,
                 status: 'DRAFT',
                 match_category: matchType,
-                player_1: pIds[0], player_2: pIds[1],
-                player_3: pIds[2], player_4: pIds[3]
+                player_1: team1[0].player_id, player_2: team1[1].player_id,
+                player_3: team2[0].player_id, player_4: team2[1].player_id
             });
 
             if (error) throw error;
 
             // 대기열에서 삭제
-            await supabase.from('queue').delete().in('player_id', pIds);
+            await supabase.from('queue').delete().in('player_id', playerIds);
 
             fetchMatches();
         } catch (e: any) { alert(e.message); }
@@ -208,15 +181,11 @@ export default function CourtBoard() {
             if (match) {
                 const pIds = [match.player_1, match.player_2, match.player_3, match.player_4].filter(Boolean);
                 const { error } = await supabase.from('matches').delete().eq('id', matchId); if (error) throw error;
-                // 취소 시 대기열 복귀 (기본 점수 부여 - 게임 안 한 걸로 간주하진 않음, 상황에 따라 다름)
-                // 여기서는 '방금 취소했으니 맨 뒤로' 보낼지, '원래 자리'로 보낼지 정책 결정 필요.
-                // 현재 로직: 기본점수(1000)으로 복귀하되 게임수는 유지되므로 적절히 뒤로 감.
                 if (pIds.length > 0) {
-                    // 복귀 시 '현재 시간'을 도착 시간으로 해서 맨 뒤로 보냄 (패널티)
                     await supabase.from('queue').insert(pIds.map(pid => ({
                         player_id: pid,
                         joined_at: new Date().toISOString(),
-                        priority_score: 1000, // 임시 점수
+                        priority_score: 1000,
                         is_active: true
                     })));
                 }
@@ -257,64 +226,66 @@ export default function CourtBoard() {
 
         const s1 = parseInt(s.t1), s2 = parseInt(s.t2);
         const winner = s1 > s2 ? 'TEAM_1' : s2 > s1 ? 'TEAM_2' : 'DRAW';
-        const K = isTourney ? 64 : 32;
 
         setLoading(true);
         try {
             const match = activeMatches.find(m => m.id === matchId);
             const pIds = [match.player_1, match.player_2, match.player_3, match.player_4].filter(Boolean);
-            const { data: players } = await supabase.from('profiles').select('id, gender, elo_men_doubles, elo_women_doubles, elo_mixed_doubles, elo_singles').in('id', pIds);
+            const { data: players } = await supabase.from('profiles').select('id, gender').in('id', pIds);
 
             if (players && players.length === 4) {
                 const males = players.filter((p: any) => (p.gender || '').toLowerCase() === 'male').length;
-                let category = 'MIXED'; let eloField = 'elo_mixed_doubles'; let label = 'Mixed Doubles';
-
-                if (males === 4) { category = 'MEN_D'; eloField = 'elo_men_doubles'; label = "Men's Doubles"; }
-                else if (males === 0) { category = 'WOMEN_D'; eloField = 'elo_women_doubles'; label = "Women's Doubles"; }
+                let category = 'MIXED'; let label = 'Mixed Doubles';
+                if (males === 4) { category = 'MEN_D'; label = "Men's Doubles"; }
+                else if (males === 0) { category = 'WOMEN_D'; label = "Women's Doubles"; }
 
                 if (!confirm(`Confirm: ${s1}:${s2}? \n[${label}]`)) { setLoading(false); return; }
 
-                const p1 = players.find((p: any) => p.id === match.player_1); const p2 = players.find((p: any) => p.id === match.player_2);
-                const p3 = players.find((p: any) => p.id === match.player_3); const p4 = players.find((p: any) => p.id === match.player_4);
+                // 1. Update Match Metadata
+                await supabase.from('matches').update({
+                    winner_team: winner,
+                    match_type: isTourney ? 'TOURNAMENT' : 'REGULAR',
+                    match_category: category
+                }).eq('id', matchId);
 
-                const t1Avg = ((p1 as any)[eloField] + (p2 as any)[eloField]) / 2;
-                const t2Avg = ((p3 as any)[eloField] + (p4 as any)[eloField]) / 2;
-                const actualT1 = s1 > s2 ? 1.0 : 0.0;
-                const expectedT1 = 1 / (1 + Math.pow(10, (t2Avg - t1Avg) / 400));
-                const delta = Math.round(K * (actualT1 - expectedT1));
+                // 2. Report Scores via Service
+                await reportMatchResult(matchId, s1, s2, user.id);
 
-                const updates = [{ p: p1, d: delta }, { p: p2, d: delta }, { p: p3, d: -delta }, { p: p4, d: -delta }];
-
-                // 1. 프로필 점수 업데이트
-                for (const u of updates) {
-                    if (u.p) {
-                        const newScore = (u.p as any)[eloField] + u.d;
-                        await supabase.from('profiles').update({ [eloField]: newScore }).eq('id', u.p.id);
-                        await supabase.from('elo_history').insert({ player_id: u.p.id, match_category: category === 'MEN_D' ? 'MEN_D' : category === 'WOMEN_D' ? 'WOMEN_D' : 'MIXED', elo_score: newScore });
-
-                        // ✨ [추가] 오늘 게임 수 +1 증가 (Priority Score에 영향 줌)
-                        await supabase.rpc('increment_games_played', { user_id: u.p.id });
-                    }
-                }
-
-                await supabase.from('matches').update({ score_team1: s1, score_team2: s2, winner_team: winner, status: 'FINISHED', end_time: new Date().toISOString(), match_type: isTourney ? 'TOURNAMENT' : 'REGULAR', match_category: category, elo_delta: delta }).eq('id', matchId);
+                alert("✅ Result Reported! Waiting for opponent confirmation.");
             }
-
-            // 게임 끝난 사람들 대기열 자동 복귀 (선택 사항 - 현재는 자동 복귀)
-            // 복귀 시 점수는 다시 계산되어야 하므로 insert만 하면 됨 (JoinQueue 로직과 유사하게 처리하면 좋지만, 여기선 일단 기본 등록)
-            /* if (pIds.length > 0) { 
-                 await supabase.from('queue').insert(pIds.map(pid => ({ 
-                     player_id: pid, 
-                     joined_at: new Date().toISOString(), 
-                     is_active: true,
-                     priority_score: 900 // 게임 1회 했으므로 대충 900점 (정확히는 트리거로 처리하거나 계산 필요)
-                 }))); 
-            } 
-            */
-            // 사용자 요청: "게임 끝나면 자동 대기 등록 X, 본인이 직접 등록해야 함" -> 주석 처리 유지
-
             fetchMatches();
         } catch (e: any) { alert(e.message); } setLoading(false);
+    };
+
+    const handleConfirmMatch = async (matchId: string) => {
+        if (!confirm("✅ Confirm this result?")) return;
+        if (!user) { alert("User not logged in."); return; }
+        setLoading(true);
+        try {
+            await confirmMatchResult(matchId, user.id);
+            alert("🎉 Match Confirmed! ELO updated.");
+            fetchMatches();
+        } catch (e: any) { alert(e.message); }
+        setLoading(false);
+    };
+
+    const handleRejectMatch = async (matchId: string) => {
+        if (!confirm("⛔ Reject this result?")) return;
+        if (!user) { alert("User not logged in."); return; }
+        setLoading(true);
+        try {
+            await rejectMatchResult(matchId, user.id);
+            alert("🛑 Match Rejected. Status set to Disputed.");
+            fetchMatches();
+        } catch (e: any) { alert(e.message); }
+        setLoading(false);
+    };
+
+    const getMyTeam = (match: any, uid: string) => {
+        if (!match || !uid) return 0;
+        if ([match.player_1, match.player_2].includes(uid)) return 1;
+        if ([match.player_3, match.player_4].includes(uid)) return 2;
+        return 0;
     };
 
     const filteredCandidates = queueCandidates.filter(c => c.profiles?.name?.toLowerCase().includes(searchTerm.toLowerCase()));
@@ -323,6 +294,15 @@ export default function CourtBoard() {
         <div className="grid grid-cols-1 gap-4">
             {courts.map((courtName) => {
                 const match = activeMatches.find(m => m.court_name === courtName);
+
+                const myTeam = user ? getMyTeam(match, user.id) : 0;
+                const reporterTeam = match?.reported_by ? getMyTeam(match, match.reported_by) : 0;
+                const isReporter = user && match?.reported_by === user.id;
+
+                // [Fix 2] 제3자에게 버튼 안 보이게 하기
+                // 내가 참가자이고(myTeam !== 0), 리포터와 다른 팀이어야 승인 권한(isOpponent) 가짐
+                const isOpponent = myTeam !== 0 && myTeam !== reporterTeam && match?.status === 'pending';
+
                 return (
                     <div key={courtName} className={`relative p-6 backdrop-blur-md border rounded-2xl shadow-lg flex flex-col items-center justify-center min-h-[260px] transition-all ${match?.status === 'PLAYING' ? 'bg-lime-900/20 border-lime-500/30' : match?.status === 'DRAFT' ? 'bg-amber-900/20 border-amber-500/30' : match?.status === 'SCORING' ? 'bg-cyan-900/20 border-cyan-500/30' : 'bg-white/5 border-white/10'}`}>
                         <div className="absolute top-4 left-4 bg-slate-700 px-3 py-1 rounded-md text-xs font-bold text-slate-300">{courtName}</div>
@@ -336,10 +316,29 @@ export default function CourtBoard() {
                                     <button onClick={() => openManualModal(courtName)} disabled={loading} className="px-4 py-2 bg-lime-700 hover:bg-lime-600 text-white font-bold rounded-lg shadow-lg border border-lime-500 disabled:opacity-50 text-sm">👆 Manual</button>
                                 </div>
                             </div>
+                        ) : match.status === 'pending' ? (
+                            <div className="text-center w-full animate-pulse">
+                                <p className="text-lg font-bold text-amber-400 mb-2">⏳ Confirmation Pending</p>
+                                <div className="text-white text-2xl font-black mb-4 tracking-widest">{match.score_team1} : {match.score_team2}</div>
+
+                                {isReporter ? (
+                                    <div className="text-slate-400 text-sm bg-slate-800/50 p-2 rounded">
+                                        Waiting for opponent to confirm...
+                                    </div>
+                                ) : isOpponent ? (
+                                    <div className="flex gap-2 justify-center">
+                                        <button onClick={() => handleConfirmMatch(match.id)} disabled={loading} className="px-6 py-2 bg-lime-600 hover:bg-lime-500 text-white font-bold rounded-xl shadow-lg border-b-4 border-lime-800 active:border-b-0 active:translate-y-1 transition-all">✅ Confirm</button>
+                                        <button onClick={() => handleRejectMatch(match.id)} disabled={loading} className="px-6 py-2 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-xl shadow-lg border-b-4 border-rose-800 active:border-b-0 active:translate-y-1 transition-all">⛔ Reject</button>
+                                    </div>
+                                ) : (
+                                    <div className="text-slate-500 text-xs">
+                                        Verification in progress...
+                                    </div>
+                                )}
+                            </div>
                         ) : match.status === 'SCORING' ? (
                             <div className="text-center w-full">
                                 <p className="text-xl font-bold text-cyan-400 mb-4">✍️ Enter Score</p>
-                                {/* 점수 입력 UI 생략 (기존 유지) */}
                                 <div className="flex flex-col items-center justify-center mb-4 gap-2">
                                     <label className="flex items-center gap-2 cursor-pointer bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-600 hover:border-amber-500 transition-colors">
                                         <input type="checkbox" checked={isTournament[match.id] || false} onChange={() => toggleTournament(match.id)} className="w-4 h-4 accent-amber-500" />
@@ -382,7 +381,6 @@ export default function CourtBoard() {
                 <span className="text-2xl mr-2 group-hover:scale-125 transition-transform">+</span> <span>Add Court</span>
             </button>
 
-            {/* 모달 렌더링 (Manual & Swap) - 기존 코드 유지 */}
             {isManualModalOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
                     <div className="bg-slate-800 border border-slate-600 rounded-2xl w-full max-w-md max-h-[80vh] flex flex-col shadow-2xl">

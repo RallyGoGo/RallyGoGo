@@ -55,7 +55,7 @@ export default function Lobby() {
 
                 {/* Right Column: Active Courts */}
                 <div className="w-full">
-                    <CourtBoard />
+                    {user && <CourtBoard user={user} />}
                 </div>
 
             </div>

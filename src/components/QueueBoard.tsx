@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { calculatePriorityScore } from '../services/matchingSystem';
 import type { User } from '@supabase/supabase-js';
 
 type QueueItem = {
@@ -28,7 +29,7 @@ export default function QueueBoard({ user }: { user: User }) {
             .from('queue')
             .select(`
                 *,
-                profiles (name, ntrp, gender, games_played_today, elo_men_doubles, elo_women_doubles)
+                profiles (name, ntrp, gender, games_played_today, elo_men_doubles, elo_women_doubles, is_guest, elo_mixed_doubles, elo_singles)
             `)
             .eq('is_active', true);
 
@@ -112,32 +113,12 @@ export default function QueueBoard({ user }: { user: User }) {
         return score || 1250;
     };
 
-    // 실시간 우선순위 점수 계산
+    // ✨ [V8.2] 실시간 우선순위 점수 계산 (Service 위임)
     const getProcessedQueue = () => {
-        const processed = queue.map(item => {
-            let finalScore = item.priority_score;
-
-            if (item.departure_time) {
-                const [targetH, targetM] = item.departure_time.split(':').map(Number);
-                const targetDate = new Date();
-                targetDate.setHours(targetH, targetM, 0, 0);
-
-                if (targetH < now.getHours() && (now.getHours() - targetH) > 12) {
-                    targetDate.setDate(targetDate.getDate() + 1);
-                } else if (targetH > now.getHours() && (targetH - now.getHours()) > 12) {
-                    targetDate.setDate(targetDate.getDate() - 1);
-                }
-
-                const diffMs = targetDate.getTime() - now.getTime();
-                const diffMins = diffMs / (1000 * 60);
-
-                // 40분 이내로 남았으면 버프
-                if (diffMins > 0 && diffMins <= 40) {
-                    finalScore += 70;
-                }
-            }
-            return { ...item, finalScore };
-        });
+        const processed = queue.map(item => ({
+            ...item,
+            finalScore: calculatePriorityScore(item)
+        }));
 
         return processed.sort((a, b) => {
             if (b.finalScore !== a.finalScore) {
