@@ -31,67 +31,65 @@ export type QueueItem = {
 // ------------------------------------------------------------------
 // (점수 계산 로직은 기존과 동일하며 완벽합니다. 그대로 유지합니다.)
 export const calculatePriorityScore = (item: any): number => {
-    const profile = item.profiles;
-    const now = new Date();
-    const joinedAt = new Date(item.joined_at);
+    try {
+        const profile = item.profiles || {};
+        const now = new Date();
+        const joinedAt = new Date(item.joined_at);
 
-    // [Fix 1] Precision Wait Score (소수점 2자리까지 반영)
-    const waitMs = now.getTime() - joinedAt.getTime();
-    const waitMinutes = waitMs / 60000;
-
-    // Safety check for invalid games_played_today
-    const gamesPlayed = profile.games_played_today || 0;
-
-    // A. Initial Boost
-    const initialBoost = gamesPlayed === 0 ? 5000 : 0;
-
-    // B. Wait Score (200 points per min)
-    const waitScore = waitMinutes * 200;
-
-    // C. Game Penalty (Exponential)
-    const gamePenalty = Math.pow(gamesPlayed, 2) * 500;
-
-    // D. Bonus
-    let bonus = 0;
-
-    // Guest Logic
-    if (profile.is_guest) {
-        const maxElo = Math.max(
-            profile.elo_men_doubles || 0,
-            profile.elo_women_doubles || 0,
-            profile.elo_mixed_doubles || 0
-        );
-        if (maxElo >= 2000) {
-            bonus += 999999; // VIP Override
-        } else {
-            bonus += 3000; // Normal Guest
+        // 1. Time Calculation (Safety Check)
+        let waitMinutes = 0;
+        if (!isNaN(joinedAt.getTime())) {
+            const waitMs = now.getTime() - joinedAt.getTime();
+            waitMinutes = Math.floor(waitMs / 60000);
         }
+
+        // 2. Number Conversion (Prevent NaN)
+        const gamesPlayed = Number(profile.games_played_today) || 0;
+
+        // A. Base Logic
+        const initialBoost = gamesPlayed === 0 ? 5000 : 0;
+        const waitScore = waitMinutes * 200;
+        const gamePenalty = Math.pow(gamesPlayed, 2) * 500;
+
+        // B. Bonus Logic
+        let bonus = 0;
+        if (profile.is_guest) {
+            const maxElo = Math.max(
+                Number(profile.elo_men_doubles) || 0,
+                Number(profile.elo_women_doubles) || 0,
+                Number(profile.elo_mixed_doubles) || 0
+            );
+            if (maxElo >= 2000) bonus += 999999;
+            else bonus += 3000;
+        }
+
+        // C. Last Game Bonus (Safe Parsing)
+        if (item.departure_time && typeof item.departure_time === 'string' && item.departure_time.includes(':')) {
+            const parts = item.departure_time.split(':');
+            const targetH = Number(parts[0]);
+            const targetM = Number(parts[1]);
+
+            if (!isNaN(targetH) && !isNaN(targetM)) {
+                const targetDate = new Date(now);
+                targetDate.setHours(targetH, targetM, 0, 0);
+
+                // Handle late night cases (crossing midnight) if needed, or keep simple
+                if (targetDate.getTime() < now.getTime() - 12 * 60 * 60 * 1000) {
+                    targetDate.setDate(targetDate.getDate() + 1);
+                }
+
+                const diffMinutes = (targetDate.getTime() - now.getTime()) / 60000;
+                if (diffMinutes > 0 && diffMinutes <= 40) {
+                    bonus += 8000;
+                }
+            }
+        }
+
+        const total = initialBoost + waitScore - gamePenalty + bonus;
+        return isNaN(total) ? 0 : Math.round(total);
+    } catch (e) {
+        return 0; // Absolute fallback
     }
-
-    // Last Game Logic (Safe Date Handling)
-    if (item.departure_time) {
-        const [targetH, targetM] = item.departure_time.split(':').map(Number);
-
-        const todayTarget = new Date(now);
-        todayTarget.setHours(targetH, targetM, 0, 0);
-
-        const tomorrowTarget = new Date(now);
-        tomorrowTarget.setDate(tomorrowTarget.getDate() + 1);
-        tomorrowTarget.setHours(targetH, targetM, 0, 0);
-
-        let targetDate = todayTarget;
-        if (todayTarget.getTime() < now.getTime() - 30 * 60000) {
-            targetDate = tomorrowTarget;
-        }
-
-        const diffMinutes = (targetDate.getTime() - now.getTime()) / 60000;
-
-        if (diffMinutes > 0 && diffMinutes <= 40) {
-            bonus += 8000;
-        }
-    }
-
-    return Math.round(initialBoost + waitScore - gamePenalty + bonus);
 };
 
 // ------------------------------------------------------------------

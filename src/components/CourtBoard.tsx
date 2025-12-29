@@ -42,18 +42,34 @@ export default function CourtBoard({ user }: { user: any }) {
     const [searchTerm, setSearchTerm] = useState('');
 
     useEffect(() => {
+        checkDailyReset(); // Check for 22:00 auto-reset
         fetchMatches();
         const channel = supabase.channel('public:matches').on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, () => { fetchMatches(); }).subscribe();
         return () => { supabase.removeChannel(channel); };
     }, []);
 
-    // [Fix 1] fetchMatches: 프로필 이름 매핑 로직 강화 (Data Loss 방지)
+    // [New Feature] 22:00 Reset Logic
+    const checkDailyReset = async () => {
+        const now = new Date();
+        // Check if it's past 22:00 (10 PM)
+        if (now.getHours() >= 22) {
+            // Check if queue is not empty to avoid redundant calls
+            const { count } = await supabase.from('queue').select('*', { count: 'exact', head: true });
+            if (count && count > 0) {
+                console.log("🕒 22:00 Passed. Clearing Queue...");
+                await supabase.from('queue').delete().neq('player_id', 'placeholder_id'); // Delete All
+                fetchMatches();
+            }
+        }
+    };
+
+    // [Fix 1] fetchMatches: 프로필 이름 매핑 로직 강화 (Data Loss 방지) & 완료된 매치 숨기기
     const fetchMatches = async () => {
         const { data: matchData } = await supabase
             .from('matches')
             .select('*')
-            .neq('status', 'FINISHED');
-        // .neq('status', 'completed'); // 완료된 경기도 잠시 보여주고 싶다면 주석 처리
+            .neq('status', 'FINISHED')
+            .neq('status', 'completed'); // [수정 완료] 주석 해제하여 완료된 매치는 화면에서 제거함
 
         if (!matchData) return;
 
@@ -339,6 +355,7 @@ export default function CourtBoard({ user }: { user: any }) {
                         ) : match.status === 'SCORING' ? (
                             <div className="text-center w-full">
                                 <p className="text-xl font-bold text-cyan-400 mb-4">✍️ Enter Score</p>
+                                {/* 점수 입력 UI 생략 (기존 유지) */}
                                 <div className="flex flex-col items-center justify-center mb-4 gap-2">
                                     <label className="flex items-center gap-2 cursor-pointer bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-600 hover:border-amber-500 transition-colors">
                                         <input type="checkbox" checked={isTournament[match.id] || false} onChange={() => toggleTournament(match.id)} className="w-4 h-4 accent-amber-500" />
@@ -381,6 +398,7 @@ export default function CourtBoard({ user }: { user: any }) {
                 <span className="text-2xl mr-2 group-hover:scale-125 transition-transform">+</span> <span>Add Court</span>
             </button>
 
+            {/* 모달 렌더링 (Manual & Swap) - 기존 코드 유지 */}
             {isManualModalOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
                     <div className="bg-slate-800 border border-slate-600 rounded-2xl w-full max-w-md max-h-[80vh] flex flex-col shadow-2xl">
