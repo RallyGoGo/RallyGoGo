@@ -16,6 +16,54 @@ const EMOJI_LIST = [
     "🔥", "💧", "⚡", "❄️", "🌈", "☀️", "🌙", "⭐", "💎", "👑", "🚀", "🛸", "⚓", "⚽", "🏀", "🏈", "⚾", "🏐", "🏉", "🎱", "🏓", "🏸", "🥊", "🥋"
 ];
 
+// Simple SVG Line Chart Component
+const SimpleLineChart = ({ data }: { data: number[] }) => {
+    if (!data || data.length < 2) return <div className="text-center text-xs text-slate-500 py-10">Not enough data for graph</div>;
+
+    const width = 300;
+    const height = 100;
+    const padding = 10;
+    const min = Math.min(...data);
+    const max = Math.max(...data);
+    const range = max - min || 1;
+
+    // Normalize points
+    const points = data.map((val, idx) => {
+        const x = (idx / (data.length - 1)) * (width - padding * 2) + padding;
+        const y = height - ((val - min) / range) * (height - padding * 2) - padding;
+        return `${x},${y}`;
+    }).join(" ");
+
+    return (
+        <div className="w-full bg-slate-900/50 rounded-xl p-4 border border-slate-700 relative overflow-hidden">
+            <p className="text-[10px] text-slate-400 font-bold mb-2 uppercase tracking-widest">ELO Trend (Recent {data.length} Games)</p>
+            <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} className="overflow-visible">
+                {/* Gradient Definition */}
+                <defs>
+                    <linearGradient id="gradient" x1="0" x2="0" y1="0" y2="1">
+                        <stop offset="0%" stopColor="#84cc16" stopOpacity="0.5" />
+                        <stop offset="100%" stopColor="#84cc16" stopOpacity="0" />
+                    </linearGradient>
+                </defs>
+                {/* Area Fill */}
+                <path d={`M ${points.split(" ")[0].split(",")[0]},${height} L ${points.replace(/,/g, " ")} L ${width - padding},${height} Z`} fill="url(#gradient)" stroke="none" />
+                {/* Line */}
+                <polyline points={points} fill="none" stroke="#84cc16" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                {/* Dots */}
+                {data.map((val, idx) => {
+                    const x = (idx / (data.length - 1)) * (width - padding * 2) + padding;
+                    const y = height - ((val - min) / range) * (height - padding * 2) - padding;
+                    return <circle key={idx} cx={x} cy={y} r="3" fill="#ecfccb" />;
+                })}
+            </svg>
+            <div className="flex justify-between text-[10px] text-slate-500 mt-2 font-mono">
+                <span>Start: {data[0]}</span>
+                <span>Current: {data[data.length - 1]}</span>
+            </div>
+        </div>
+    );
+};
+
 export default function MyStatsModal({ user, onClose, onUpdate }: Props) {
     const [name, setName] = useState('');
     const [selectedEmoji, setSelectedEmoji] = useState('🎾');
@@ -33,6 +81,10 @@ export default function MyStatsModal({ user, onClose, onUpdate }: Props) {
     const [worstRival, setWorstRival] = useState<{ name: string, losses: number } | null>(null);
     const [totalStats, setTotalStats] = useState({ wins: 0, losses: 0, winRate: 0 });
 
+    // [New] Graph & Badges
+    const [eloHistory, setEloHistory] = useState<number[]>([]);
+    const [mvpBadges, setMvpBadges] = useState<{ tag: string, count: number }[]>([]);
+
     useEffect(() => {
         fetchMyData();
     }, [user]);
@@ -48,7 +100,7 @@ export default function MyStatsModal({ user, onClose, onUpdate }: Props) {
             setMyProfile(profile);
         }
 
-        // 2. Analyze Matches (Same logic as before)
+        // 2. Analyze Matches
         const { data: matches } = await supabase.from('matches')
             .select('*').eq('status', 'FINISHED')
             .or(`player_1.eq.${user.id},player_2.eq.${user.id},player_3.eq.${user.id},player_4.eq.${user.id}`);
@@ -80,77 +132,65 @@ export default function MyStatsModal({ user, onClose, onUpdate }: Props) {
             let worstPid = Object.keys(rivalStats).reduce((a, b) => rivalStats[a] > rivalStats[b] ? a : b, '');
             if (worstPid) { const { data } = await supabase.from('profiles').select('name').eq('id', worstPid).single(); if (data) setWorstRival({ name: data.name, losses: rivalStats[worstPid] }); }
         }
+
+        // 3. [New] Load ELO History (Graph)
+        const { data: history } = await supabase.from('elo_history')
+            .select('elo_score')
+            .eq('player_id', user.id)
+            .order('created_at', { ascending: true }) // Oldest first
+            .limit(20); // Last 20 changes
+
+        if (history) {
+            setEloHistory(history.map((h: any) => h.elo_score));
+        }
+
+        // 4. [New] Load MVP Badges
+        const { data: votes } = await supabase.from('mvp_votes')
+            .select('tag')
+            .eq('target_id', user.id);
+
+        if (votes) {
+            const badgeCounts: { [key: string]: number } = {};
+            votes.forEach((v: any) => { badgeCounts[v.tag] = (badgeCounts[v.tag] || 0) + 1; });
+            const sortedBadges = Object.entries(badgeCounts)
+                .map(([tag, count]) => ({ tag, count }))
+                .sort((a, b) => b.count - a.count);
+            setMvpBadges(sortedBadges);
+        }
+
         setLoading(false);
     };
 
-    // 📸 Image Compression & Upload Logic
+    // 📸 Image Compression & Upload Logic (Same as before)
     const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
         if (!event.target.files || event.target.files.length === 0) return;
         setUploading(true);
-
         const file = event.target.files[0];
-
         try {
-            // 1. Compress Image (Client-side Canvas)
             const compressedFile = await new Promise<Blob>((resolve, reject) => {
-                const img = new Image();
-                img.src = URL.createObjectURL(file);
+                const img = new Image(); img.src = URL.createObjectURL(file);
                 img.onload = () => {
-                    const canvas = document.createElement('canvas');
-                    const ctx = canvas.getContext('2d');
+                    const canvas = document.createElement('canvas'); const ctx = canvas.getContext('2d');
                     if (!ctx) { reject('Canvas error'); return; }
-
-                    // Resize logic (Max 300px width/height)
-                    const MAX_SIZE = 300;
-                    let width = img.width;
-                    let height = img.height;
-
-                    if (width > height) {
-                        if (width > MAX_SIZE) { height *= MAX_SIZE / width; width = MAX_SIZE; }
-                    } else {
-                        if (height > MAX_SIZE) { width *= MAX_SIZE / height; height = MAX_SIZE; }
-                    }
-
-                    canvas.width = width;
-                    canvas.height = height;
-                    ctx.drawImage(img, 0, 0, width, height);
-
-                    // Convert to Blob (JPEG 70% quality)
-                    canvas.toBlob((blob) => {
-                        if (blob) resolve(blob); else reject('Compression failed');
-                    }, 'image/jpeg', 0.7);
-                };
-                img.onerror = (e) => reject(e);
+                    const MAX_SIZE = 300; let width = img.width; let height = img.height;
+                    if (width > height) { if (width > MAX_SIZE) { height *= MAX_SIZE / width; width = MAX_SIZE; } }
+                    else { if (height > MAX_SIZE) { width *= MAX_SIZE / height; height = MAX_SIZE; } }
+                    canvas.width = width; canvas.height = height; ctx.drawImage(img, 0, 0, width, height);
+                    canvas.toBlob((blob) => { if (blob) resolve(blob); else reject('Compression failed'); }, 'image/jpeg', 0.7);
+                }; img.onerror = (e) => reject(e);
             });
-
-            // 2. Upload to Supabase Storage ('avatars' bucket)
-            const fileExt = 'jpg';
-            const fileName = `${user.id}-${Date.now()}.${fileExt}`;
+            const fileExt = 'jpg'; const fileName = `${user.id}-${Date.now()}.${fileExt}`;
             const { error: uploadError } = await supabase.storage.from('avatars').upload(fileName, compressedFile);
-
             if (uploadError) throw uploadError;
-
-            // 3. Get Public URL
             const { data: { publicUrl } } = supabase.storage.from('avatars').getPublicUrl(fileName);
-            setAvatarUrl(publicUrl); // Preview immediately
-
-        } catch (error: any) {
-            alert('Upload Error: ' + error.message);
-        } finally {
-            setUploading(false);
-        }
+            setAvatarUrl(publicUrl);
+        } catch (error: any) { alert('Upload Error: ' + error.message); } finally { setUploading(false); }
     };
 
     const handleSave = async () => {
         setSaving(true);
-        // Name is READ-ONLY, so we don't update it. Only Emoji & Avatar.
         const { error } = await supabase.from('profiles').update({ emoji: selectedEmoji, avatar_url: avatarUrl }).eq('id', user.id);
-        if (error) alert(error.message);
-        else {
-            alert("✅ Profile Updated!");
-            onUpdate();
-            onClose();
-        }
+        if (error) alert(error.message); else { alert("✅ Profile Updated!"); onUpdate(); onClose(); }
         setSaving(false);
     };
 
@@ -158,142 +198,70 @@ export default function MyStatsModal({ user, onClose, onUpdate }: Props) {
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fadeIn">
             <div className="bg-slate-800 border border-slate-600 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
                 <div className="bg-slate-900 p-4 border-b border-slate-700 flex justify-between items-center">
-                    <h2 className="text-xl font-bold text-white flex items-center gap-2">⚙️ My Settings & Stats</h2>
+                    <h2 className="text-xl font-bold text-white flex items-center gap-2">⚙️ My Stats</h2>
                     <button onClick={onClose} className="text-slate-400 hover:text-white">✕</button>
                 </div>
 
                 <div className="p-6 overflow-y-auto custom-scrollbar">
                     {loading ? <div className="text-center py-10">Loading...</div> : (
                         <>
-                            {/* 1. Edit Profile */}
-                            <div className="mb-8 flex flex-col items-center">
-                                {/* Photo / Emoji Selector */}
+                            {/* 1. Profile Header (Same) */}
+                            <div className="mb-6 flex flex-col items-center">
                                 <div className="relative group mb-4">
-                                    <div
-                                        onClick={() => fileInputRef.current?.click()}
-                                        className="w-24 h-24 rounded-full bg-slate-700 border-4 border-slate-500 flex items-center justify-center text-5xl cursor-pointer hover:border-lime-400 overflow-hidden transition-all shadow-xl"
-                                    >
-                                        {uploading ? (
-                                            <div className="text-xs text-white animate-pulse">Uploading...</div>
-                                        ) : avatarUrl ? (
-                                            <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
-                                        ) : (
-                                            <span>{selectedEmoji}</span>
-                                        )}
-
-                                        {/* Hover Overlay */}
-                                        <div className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <span className="text-xs text-white font-bold">📷 Change</span>
-                                        </div>
+                                    <div onClick={() => fileInputRef.current?.click()} className="w-24 h-24 rounded-full bg-slate-700 border-4 border-slate-500 flex items-center justify-center text-5xl cursor-pointer hover:border-lime-400 overflow-hidden transition-all shadow-xl">
+                                        {uploading ? <div className="text-xs text-white animate-pulse">Uploading...</div> : avatarUrl ? <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" /> : <span>{selectedEmoji}</span>}
+                                        <div className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"><span className="text-xs text-white font-bold">📷 Change</span></div>
                                     </div>
-                                    <input
-                                        type="file"
-                                        ref={fileInputRef}
-                                        onChange={handleImageUpload}
-                                        accept="image/*"
-                                        className="hidden"
-                                    />
-
-                                    {/* Emoji Quick Picker (If no photo) */}
-                                    {!avatarUrl && (
-                                        <div className="absolute top-0 -right-10 flex flex-col gap-1 h-24 overflow-y-auto custom-scrollbar bg-slate-800 p-1 rounded border border-slate-600">
-                                            {EMOJI_LIST.slice(0, 10).map(e => <button key={e} onClick={() => setSelectedEmoji(e)} className="text-lg hover:bg-slate-600 rounded">{e}</button>)}
-                                            <button onClick={() => setSelectedEmoji('🎾')} className="text-[10px] text-slate-400">More..</button>
-                                        </div>
-                                    )}
+                                    <input type="file" ref={fileInputRef} onChange={handleImageUpload} accept="image/*" className="hidden" />
+                                    {!avatarUrl && <div className="absolute top-0 -right-10 flex flex-col gap-1 h-24 overflow-y-auto custom-scrollbar bg-slate-800 p-1 rounded border border-slate-600">{EMOJI_LIST.slice(0, 10).map(e => <button key={e} onClick={() => setSelectedEmoji(e)} className="text-lg hover:bg-slate-600 rounded">{e}</button>)}<button onClick={() => setSelectedEmoji('🎾')} className="text-[10px] text-slate-400">More..</button></div>}
                                 </div>
+                                <h3 className="text-2xl font-black text-white">{name}</h3>
+                                <p className="text-xs text-lime-400 font-bold mb-4">{myProfile?.gender} · {myProfile?.role || 'Member'}</p>
 
-                                {/* Emoji List (Full) - Toggle logic omitted for simplicity, showing list below */}
-                                <div className="w-full mb-4">
-                                    <p className="text-xs text-slate-400 mb-2 text-center">Or pick an Emoji:</p>
-                                    <div className="flex flex-wrap justify-center gap-1 max-h-24 overflow-y-auto bg-slate-900/50 p-2 rounded-lg border border-slate-700">
-                                        {EMOJI_LIST.map(e => (
-                                            <button key={e} onClick={() => { setSelectedEmoji(e); setAvatarUrl(null); }} className={`p-1.5 rounded text-xl transition-all ${selectedEmoji === e ? 'bg-lime-500/20 scale-110' : 'hover:bg-slate-700'}`}>
-                                                {e}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-
-                                {/* Name Field (Read-Only) */}
-                                <div className="w-full">
-                                    <label className="block text-xs text-slate-400 font-bold mb-1 ml-1">Name (Fixed)</label>
-                                    <input
-                                        type="text"
-                                        value={name}
-                                        readOnly // 🔒 수정 불가
-                                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-slate-400 cursor-not-allowed font-bold text-center"
-                                    />
-
-                                    {/* Detailed Stats (Gender / ELO) */}
-                                    {myProfile && (
-                                        <div className="w-full mt-4 bg-slate-700/30 rounded-xl p-3 border border-slate-600 grid grid-cols-2 gap-2 text-xs">
-                                            <div className="col-span-2 flex justify-center mb-1">
-                                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${(myProfile.gender || '').toLowerCase() === 'male' ? 'bg-blue-900 text-blue-300' : (myProfile.gender || '').toLowerCase() === 'female' ? 'bg-rose-900 text-rose-300' : 'bg-slate-700 text-slate-400'}`}>
-                                                    {myProfile.gender || 'No Gender'}
-                                                </span>
-                                            </div>
-                                            <div className="flex justify-between px-2 py-1 bg-slate-800 rounded">
-                                                <span className="text-blue-300">Men</span>
-                                                <span className="font-mono font-bold text-white">{myProfile.elo_men_doubles || '-'}</span>
-                                            </div>
-                                            <div className="flex justify-between px-2 py-1 bg-slate-800 rounded">
-                                                <span className="text-rose-300">Women</span>
-                                                <span className="font-mono font-bold text-white">{myProfile.elo_women_doubles || '-'}</span>
-                                            </div>
-                                            <div className="flex justify-between px-2 py-1 bg-slate-800 rounded">
-                                                <span className="text-purple-300">Mixed</span>
-                                                <span className="font-mono font-bold text-white">{myProfile.elo_mixed_doubles || '-'}</span>
-                                            </div>
-                                            <div className="flex justify-between px-2 py-1 bg-slate-800 rounded">
-                                                <span className="text-emerald-300">Singles</span>
-                                                <span className="font-mono font-bold text-white">{myProfile.elo_singles || '-'}</span>
-                                            </div>
-                                        </div>
-                                    )}
+                                {/* ELO Grid */}
+                                <div className="w-full bg-slate-700/30 rounded-xl p-3 border border-slate-600 grid grid-cols-4 gap-2 text-center text-xs">
+                                    <div className="bg-slate-800 rounded p-1"><p className="text-slate-400">Men</p><p className="font-bold text-white">{myProfile.elo_men_doubles || '-'}</p></div>
+                                    <div className="bg-slate-800 rounded p-1"><p className="text-slate-400">Women</p><p className="font-bold text-white">{myProfile.elo_women_doubles || '-'}</p></div>
+                                    <div className="bg-slate-800 rounded p-1"><p className="text-slate-400">Mixed</p><p className="font-bold text-white">{myProfile.elo_mixed_doubles || '-'}</p></div>
+                                    <div className="bg-slate-800 rounded p-1"><p className="text-slate-400">Single</p><p className="font-bold text-white">{myProfile.elo_singles || '-'}</p></div>
                                 </div>
                             </div>
 
-                            {/* 2. Stats (Partner/Rival) */}
-                            <div className="grid grid-cols-2 gap-4 mb-6">
-                                <div className="bg-gradient-to-br from-indigo-900/50 to-slate-800 border border-indigo-500/30 rounded-xl p-4 flex flex-col items-center text-center relative overflow-hidden">
-                                    <div className="absolute top-0 right-0 p-1 opacity-20 text-4xl">🤝</div>
-                                    <p className="text-[10px] text-indigo-300 font-bold uppercase mb-1">Soulmate</p>
-                                    {bestPartner ? (
-                                        <>
-                                            <p className="text-lg font-black text-white">{bestPartner.name}</p>
-                                            <p className="text-xs text-slate-400">Won <span className="text-lime-400 font-bold">{bestPartner.wins}</span> games together</p>
-                                        </>
-                                    ) : <p className="text-xs text-slate-500 italic mt-2">No data yet</p>}
+                            {/* 2. [New] ELO Graph */}
+                            <div className="mb-6">
+                                <SimpleLineChart data={eloHistory} />
+                            </div>
+
+                            {/* 3. Win Rate & Rival */}
+                            <div className="grid grid-cols-2 gap-3 mb-6">
+                                <div className="bg-slate-900/50 border border-slate-700 rounded-xl p-3 text-center">
+                                    <p className="text-xs text-slate-500 mb-1">Win Rate</p>
+                                    <p className="text-xl font-black text-lime-400">{totalStats.winRate}%</p>
+                                    <p className="text-[10px] text-slate-400">{totalStats.wins}W - {totalStats.losses}L</p>
                                 </div>
-                                <div className="bg-gradient-to-br from-rose-900/50 to-slate-800 border border-rose-500/30 rounded-xl p-4 flex flex-col items-center text-center relative overflow-hidden">
-                                    <div className="absolute top-0 right-0 p-1 opacity-20 text-4xl">😈</div>
-                                    <p className="text-[10px] text-rose-300 font-bold uppercase mb-1">Rival</p>
-                                    {worstRival ? (
-                                        <>
-                                            <p className="text-lg font-black text-white">{worstRival.name}</p>
-                                            <p className="text-xs text-slate-400">Lost <span className="text-rose-400 font-bold">{worstRival.losses}</span> times</p>
-                                        </>
-                                    ) : <p className="text-xs text-slate-500 italic mt-2">Undefeated!</p>}
+                                <div className="bg-slate-900/50 border border-slate-700 rounded-xl p-3 text-center flex flex-col justify-center">
+                                    {bestPartner ? <div><p className="text-xs text-indigo-400 font-bold">Best Partner</p><p className="text-sm font-bold text-white">{bestPartner.name}</p></div> : <p className="text-xs text-slate-500">Play more games!</p>}
                                 </div>
                             </div>
 
-                            {/* 3. Summary */}
-                            <div className="bg-slate-900/50 rounded-xl p-4 border border-slate-700 flex justify-around text-center">
-                                <div><p className="text-xs text-slate-500">Wins</p><p className="text-xl font-black text-lime-400">{totalStats.wins}</p></div>
-                                <div><p className="text-xs text-slate-500">Win Rate</p><p className="text-xl font-black text-white">{totalStats.winRate}%</p></div>
-                                <div><p className="text-xs text-slate-500">Losses</p><p className="text-xl font-black text-rose-400">{totalStats.losses}</p></div>
+                            {/* 4. [New] MVP Badges */}
+                            <div className="bg-slate-900/50 rounded-xl p-4 border border-slate-700">
+                                <p className="text-[10px] text-slate-400 font-bold mb-2 uppercase">My MVP Badges</p>
+                                <div className="flex flex-wrap gap-2">
+                                    {mvpBadges.length > 0 ? mvpBadges.map((badge, idx) => (
+                                        <div key={idx} className="bg-slate-800 border border-slate-600 px-3 py-1 rounded-full text-xs font-bold text-white flex items-center gap-1 shadow-sm">
+                                            <span>{badge.tag}</span>
+                                            <span className="bg-yellow-500 text-slate-900 w-4 h-4 rounded-full flex items-center justify-center text-[9px]">{badge.count}</span>
+                                        </div>
+                                    )) : <p className="text-xs text-slate-500 italic">No MVP votes yet. Show them your skills!</p>}
+                                </div>
                             </div>
                         </>
                     )}
                 </div>
 
                 <div className="p-4 border-t border-slate-700 bg-slate-900">
-                    <button
-                        onClick={handleSave}
-                        disabled={saving}
-                        className="w-full py-3 bg-lime-500 hover:bg-lime-400 text-slate-900 font-bold rounded-xl shadow-lg disabled:opacity-50"
-                    >
+                    <button onClick={handleSave} disabled={saving} className="w-full py-3 bg-lime-500 hover:bg-lime-400 text-slate-900 font-bold rounded-xl shadow-lg disabled:opacity-50">
                         {saving ? 'Saving...' : 'Save Changes'}
                     </button>
                 </div>

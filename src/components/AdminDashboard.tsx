@@ -1,7 +1,17 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 
-type Profile = { id: string; email: string; name: string; gender: string; ntrp: number; is_guest: boolean; };
+// [Update] role 필드 추가
+type Profile = {
+    id: string;
+    email: string;
+    name: string;
+    gender: string;
+    ntrp: number;
+    is_guest: boolean;
+    role?: string; // 'member', 'coach', 'admin'
+};
+
 type Notice = { id: string; content: string; is_active: boolean; created_at: string; };
 type Match = {
     id: string; end_time: string; score_team1: number; score_team2: number; winner_team: string;
@@ -21,6 +31,7 @@ export default function AdminBoard({ onClose }: Props) {
     const [searchTerm, setSearchTerm] = useState('');
 
     const [editingId, setEditingId] = useState<string | null>(null);
+    // [Update] Role 수정을 위해 Partial 타입 확장
     const [editForm, setEditForm] = useState<Partial<Profile>>({});
     const [newNotice, setNewNotice] = useState('');
 
@@ -59,15 +70,26 @@ export default function AdminBoard({ onClose }: Props) {
         setLoading(false);
     };
 
-    const startEdit = (p: Profile) => { setEditingId(p.id); setEditForm({ name: p.name, gender: p.gender || 'Male', ntrp: p.ntrp }); };
-    const saveEdit = async () => { if (!editingId) return; const { error } = await supabase.from('profiles').update(editForm).eq('id', editingId); if (error) alert(error.message); else { setEditingId(null); fetchProfiles(); } };
+    // [Update] Role 정보도 폼에 세팅
+    const startEdit = (p: Profile) => {
+        setEditingId(p.id);
+        setEditForm({ name: p.name, gender: p.gender || 'Male', ntrp: p.ntrp, role: p.role || 'member' });
+    };
 
-    // 위험한 기능들 (조심!)
+    const saveEdit = async () => {
+        if (!editingId) return;
+        const { error } = await supabase.from('profiles').update(editForm).eq('id', editingId);
+        if (error) alert(error.message);
+        else { setEditingId(null); fetchProfiles(); }
+    };
+
+    // 위험한 기능들
     const clearQueue = async () => { if (!confirm("⚠️ 대기열을 초기화하시겠습니까? (모든 대기자 삭제)")) return; await supabase.from('queue').delete().neq('user_id', '00000000-0000-0000-0000-000000000000'); alert("Queue Cleared!"); };
 
     const addNotice = async () => { if (!newNotice.trim()) return; await supabase.from('notices').insert({ content: newNotice, is_active: true }); setNewNotice(''); fetchNotices(); };
     const deleteNotice = async (id: string) => { if (!confirm("Delete this notice?")) return; await supabase.from('notices').delete().eq('id', id); fetchNotices(); };
 
+    // [Update] 롤백 시 히스토리 로그 추가 로직 반영
     const rollbackMatch = async (m: Match) => {
         if (!confirm(`⚠️ WARNING: 이 경기 기록을 정말 삭제하시겠습니까?\n(${m.score_team1}:${m.score_team2}, ${m.match_category})\n\n점수 변동(ELO)도 원래대로 되돌려집니다.`)) return;
         setLoading(true);
@@ -82,16 +104,26 @@ export default function AdminBoard({ onClose }: Props) {
                 const winners = m.winner_team === 'TEAM_1' ? [m.player_1, m.player_2] : [m.player_3, m.player_4];
                 const losers = m.winner_team === 'TEAM_1' ? [m.player_3, m.player_4] : [m.player_1, m.player_2];
                 const { data: players } = await supabase.from('profiles').select(`id, ${eloField}`).in('id', [...winners, ...losers].filter(Boolean));
+
                 if (players) {
                     for (const p of players) {
                         const isWinner = winners.includes(p.id);
                         // 이겼던 사람은 점수 뺏고(-), 졌던 사람은 점수 돌려줌(+)
                         const revertAmount = isWinner ? -delta : delta;
-                        const currentScore = (p as any)[eloField];
+                        const currentScore = (p as any)[eloField] || 1200;
+                        const newScore = currentScore + revertAmount;
+
                         // 1. 프로필 점수 원복
-                        await supabase.from('profiles').update({ [eloField]: currentScore + revertAmount }).eq('id', p.id);
-                        // 2. 히스토리에 원복 기록 남김 (선택사항)
-                        // await supabase.from('elo_history').insert({ player_id: p.id, match_category: m.match_category, elo_score: currentScore + revertAmount });
+                        await supabase.from('profiles').update({ [eloField]: newScore }).eq('id', p.id);
+
+                        // 2. [New] 히스토리에 원복 기록 남김 (그래프 보정용)
+                        await supabase.from('elo_history').insert({
+                            player_id: p.id,
+                            match_type: m.match_category,
+                            elo_score: newScore,
+                            delta: revertAmount,
+                            created_at: new Date().toISOString()
+                        });
                     }
                 }
             }
@@ -147,10 +179,10 @@ export default function AdminBoard({ onClose }: Props) {
                                 <div className="overflow-x-auto">
                                     <table className="w-full text-left border-collapse">
                                         <thead className="bg-slate-700 text-slate-300 text-xs uppercase">
-                                            <tr><th className="p-4 min-w-[100px]">이름</th><th className="p-4">성별</th><th className="p-4">NTRP</th><th className="p-4 text-right">관리</th></tr>
+                                            <tr><th className="p-4 min-w-[100px]">이름</th><th className="p-4">성별</th><th className="p-4">NTRP</th><th className="p-4">등급(Role)</th><th className="p-4 text-right">관리</th></tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-700">
-                                            {loading ? <tr><td colSpan={4} className="p-8 text-center text-slate-500">로딩 중...</td></tr> : filteredProfiles.map(p => (
+                                            {loading ? <tr><td colSpan={5} className="p-8 text-center text-slate-500">로딩 중...</td></tr> : filteredProfiles.map(p => (
                                                 <tr key={p.id} className="hover:bg-slate-700/50">
                                                     <td className="p-4">
                                                         {editingId === p.id ? <input className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white w-full" value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} /> : <span className="font-bold text-white">{p.name}</span>}
@@ -166,6 +198,24 @@ export default function AdminBoard({ onClose }: Props) {
                                                         {editingId === p.id ? (
                                                             <input type="number" step="0.5" className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white w-16" value={editForm.ntrp} onChange={e => setEditForm({ ...editForm, ntrp: parseFloat(e.target.value) })} />
                                                         ) : <span className="font-mono text-slate-400">{p.ntrp}</span>}
+                                                    </td>
+                                                    {/* [New] Role Editing Column */}
+                                                    <td className="p-4">
+                                                        {editingId === p.id ? (
+                                                            <select
+                                                                className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white text-xs"
+                                                                value={editForm.role}
+                                                                onChange={e => setEditForm({ ...editForm, role: e.target.value })}
+                                                            >
+                                                                <option value="member">Member</option>
+                                                                <option value="coach">Coach</option>
+                                                                <option value="admin">Admin</option>
+                                                            </select>
+                                                        ) : (
+                                                            <span className={`text-xs px-2 py-1 rounded font-bold ${p.role === 'coach' ? 'bg-purple-900 text-purple-300' : p.role === 'admin' ? 'bg-rose-900 text-rose-300' : 'bg-slate-700 text-slate-400'}`}>
+                                                                {p.role || 'member'}
+                                                            </span>
+                                                        )}
                                                     </td>
                                                     <td className="p-4 text-right">
                                                         {editingId === p.id ?
