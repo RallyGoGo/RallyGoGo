@@ -10,6 +10,7 @@ import QueueBoard from './components/QueueBoard';
 import CourtBoard from './components/CourtBoard';
 import MyStatsModal from './components/MyStatsModal';
 import AdminDashboard from './components/AdminDashboard';
+import BettingModal from './components/BettingModal';
 
 interface Profile {
   name: string;
@@ -25,6 +26,7 @@ export default function App() {
 
   const [isMyPageOpen, setIsMyPageOpen] = useState(false);
   const [isAdminOpen, setIsAdminOpen] = useState(false);
+  const [isBettingOpen, setIsBettingOpen] = useState(false); // [New]
   const [activeNotice, setActiveNotice] = useState<string | null>(null);
 
   useEffect(() => {
@@ -116,6 +118,17 @@ export default function App() {
       {/* 모달들 */}
       {isMyPageOpen && <MyStatsModal user={session.user} onClose={() => setIsMyPageOpen(false)} onUpdate={() => fetchProfile(session.user.id)} />}
       {isAdminOpen && <AdminDashboard onClose={() => setIsAdminOpen(false)} />}
+      {isBettingOpen && <BettingModal isOpen={isBettingOpen} onClose={() => setIsBettingOpen(false)} myId={session.user.id} />}
+
+      {/* 🎲 Floating Betting Button */}
+      {!isBettingOpen && (
+        <button
+          onClick={() => setIsBettingOpen(true)}
+          className="fixed bottom-24 right-4 z-40 bg-yellow-500 text-slate-900 p-4 rounded-full shadow-2xl border-2 border-yellow-300 animate-bounce active:scale-90 transition-transform"
+        >
+          <span className="text-2xl">🎲</span>
+        </button>
+      )}
     </div>
   );
 }
