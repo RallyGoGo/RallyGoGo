@@ -10,7 +10,6 @@ export const reportMatchResult = async (matchId: string, scoreTeam1: number, sco
         .update({
             score_team1: scoreTeam1, // DB 컬럼: integer
             score_team2: scoreTeam2, // DB 컬럼: integer
-            match_score: `${scoreTeam1}:${scoreTeam2}`, // 표기용 문자열 (선택)
             reported_by: reporterId,
             status: 'pending',
             end_time: new Date().toISOString()
