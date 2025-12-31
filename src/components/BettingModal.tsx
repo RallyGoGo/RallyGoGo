@@ -43,11 +43,11 @@ export default function BettingModal({ isOpen, onClose, myId }: Props) {
 
     const fetchDraftMatches = async () => {
         setLoading(true);
-        // Only DRAFT matches are betting targets
+        // ✅ [Fix] DRAFT, PENDING, draft, pending 등 다양한 상태를 모두 배팅 가능 대상으로 포함
         const { data: matchesData } = await supabase
             .from('matches')
             .select('*')
-            .eq('status', 'draft')
+            .in('status', ['draft', 'DRAFT', 'pending', 'PENDING'])
             .order('created_at', { ascending: false });
 
         if (matchesData && matchesData.length > 0) {
