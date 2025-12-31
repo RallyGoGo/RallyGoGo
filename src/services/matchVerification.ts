@@ -11,7 +11,7 @@ export const reportMatchResult = async (matchId: string, scoreTeam1: number, sco
             score_team1: scoreTeam1, // DB 컬럼: integer
             score_team2: scoreTeam2, // DB 컬럼: integer
             reported_by: reporterId,
-            status: 'pending',
+            status: 'PENDING', // [수정] 대문자 통일 (안전)
             end_time: new Date().toISOString()
         })
         .eq('id', matchId)
@@ -33,7 +33,9 @@ export const confirmMatchResult = async (matchId: string, confirmerId: string, i
         .single();
 
     if (error || !match) throw new Error('Match not found');
-    if (match.status === 'completed') throw new Error('Match already confirmed');
+
+    // [수정] 이미 끝난 경기 체크 (FINISHED)
+    if (match.status === 'FINISHED') throw new Error('Match already confirmed');
 
     // B. Security Check (상대방 검증)
     // DB 컬럼이 player_1, player_2 (Team1) / player_3, player_4 (Team2) 라고 가정
@@ -59,10 +61,11 @@ export const confirmMatchResult = async (matchId: string, confirmerId: string, i
     }
 
     // C. Update Status
+    // ★ [핵심 수정] 상태를 'FINISHED'로 저장해야 DB 트리거가 작동하여 배팅금이 정산됩니다.
     const { error: updateError } = await supabase
         .from('matches')
         .update({
-            status: 'completed',
+            status: 'FINISHED',
             confirmed_by: confirmerId
         })
         .eq('id', matchId);
@@ -88,7 +91,6 @@ export const confirmMatchResult = async (matchId: string, confirmerId: string, i
     }
 
     // ELO 함수 호출 (V3.1 규격에 맞춤)
-    // Refactored updateEloAfterMatch accepts: { match_type, team1_ids, team2_ids, is_tournament }
     await updateEloAfterMatch({
         match_type: match.match_category || 'MIXED', // Key mapping fix: pass category as match_type
         team1_ids: winners, // 승자 팀 ID 배열
@@ -104,7 +106,7 @@ export const rejectMatchResult = async (matchId: string, rejectorId: string) => 
     const { error } = await supabase
         .from('matches')
         .update({
-            status: 'disputed',
+            status: 'DISPUTED', // [수정] 대문자 통일
             confirmed_by: null
         })
         .eq('id', matchId);
