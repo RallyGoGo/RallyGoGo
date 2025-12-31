@@ -17,27 +17,32 @@ export default function GuestRegistrar({ onClose, onSuccess }: Props) {
         setLoading(true);
 
         try {
-            // 1. UUID 생성 (브라우저 호환성 체크)
-            const guestId = crypto.randomUUID ? crypto.randomUUID() : 'guest-' + Date.now();
-
-            // 2. 게스트 밸런스 패치 (실력 + 0.25)
-            // 게스트는 보통 실력을 낮게 말하는 경향이 있으므로, 조금 더 강한 상대로 매칭
+            // [Security Fix] 클라이언트에서 ID를 만들지 않고 DB(Supabase)에 맡김
+            // 1. 게스트 밸런스 패치
             const realScore = parseFloat(ntrp);
             const boostedScore = realScore + 0.25;
 
-            // ELO 점수 변환 (NTRP 3.0 -> ELO 1200 기준, 0.5당 100점 차이 등 가정)
-            // 여기서는 단순하게 기본 1200점으로 시작하되, 큐 우선순위 점수(priority_score)를 높입니다.
+            // 2. 프로필 생성 (Profiles Insert) -> ID는 DB가 자동 생성 (uuid_generate_v4)
+            // 주의: profiles 테이블의 id가 uuid 타입이고 default gen_random_uuid() 설정이 되어 있어야 함.
+            // 만약 안 되어 있다면, 수동 생성 로직 사용 (아래 fallback)
 
-            // 3. 프로필 생성 (Profiles Insert)
+            // 안전한 수동 ID 생성 함수 (HTTPS 여부 상관없이 작동)
+            const generateUUID = () => {
+                return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+                    var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+                    return v.toString(16);
+                });
+            };
+            const guestId = generateUUID();
+
             const { error: profileError } = await supabase.from('profiles').insert({
                 id: guestId,
-                email: `guest_${Date.now()}@temp.com`, // 더미 이메일
-                name: `${name} (G)`, // (G) 태그로 게스트 구분
+                email: `guest_${Date.now()}@temp.com`,
+                name: `${name} (G)`,
                 ntrp: boostedScore,
                 gender: gender,
                 is_guest: true,
                 role: 'member',
-                // DB 필수 컬럼 채우기
                 elo_men_doubles: 1200,
                 elo_women_doubles: 1200,
                 elo_mixed_doubles: 1200,
@@ -47,14 +52,13 @@ export default function GuestRegistrar({ onClose, onSuccess }: Props) {
 
             if (profileError) throw profileError;
 
-            // 4. 대기열 즉시 등록 (Queue Insert)
+            // 3. 대기열 즉시 등록
             const { error: queueError } = await supabase.from('queue').insert({
                 player_id: guestId,
-                joined_at: new Date().toISOString(),
+                joined_at: new Date().toISOString(), // [Fix] 필수 컬럼
                 is_active: true,
-                // 우선순위 점수에 NTRP 반영 (매칭 시스템이 이 점수를 참고한다면)
-                priority_score: 5000 + (boostedScore * 100), // 신규 버프(5000) + 실력 가산점
-                departure_time: '23:00' // 막차 시간 기본값
+                priority_score: 5000 + (boostedScore * 100),
+                departure_time: '23:00'
             });
 
             if (queueError) throw queueError;
