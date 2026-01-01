@@ -68,8 +68,6 @@ export default function CourtBoard({ user }: { user: any }) {
         const { data: matchData } = await supabase
             .from('matches')
             .select('*')
-            .from('matches')
-            .select('*')
             .neq('status', 'FINISHED'); // [Refactor] remove legacy 'completed' check
 
         if (!matchData) return;
