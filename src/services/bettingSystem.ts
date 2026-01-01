@@ -62,10 +62,11 @@ export const BettingSystem = {
      * Place a bet using RPC for atomic transaction
      */
     placeBet: async (matchId: string, userId: string, pick: 'TEAM_1' | 'TEAM_2', amount: number, odds: number) => {
+        // ✅ [Fix] RPC 파라미터 이름을 DB 함수 정의(p_pick)와 일치시킴
         const { data, error } = await supabase.rpc('place_bet', {
             p_match_id: matchId,
             p_user_id: userId,
-            p_pick_team: pick,
+            p_pick: pick,        // 기존 p_pick_team -> p_pick 으로 수정 완료
             p_amount: amount,
             p_odds: odds
         });
