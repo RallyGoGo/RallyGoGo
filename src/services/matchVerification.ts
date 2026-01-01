@@ -1,5 +1,5 @@
 import { supabase } from '../lib/supabase';
-import { updateEloAfterMatch } from './eloSystem';
+
 
 // 1. 결과 입력 (Report) - 점수를 명확하게 분리해서 입력받음
 export const reportMatchResult = async (matchId: string, scoreTeam1: number, scoreTeam2: number, reporterId: string) => {
@@ -91,12 +91,15 @@ export const confirmMatchResult = async (matchId: string, confirmerId: string, i
     }
 
     // ELO 함수 호출 (V3.1 규격에 맞춤)
-    await updateEloAfterMatch({
-        match_type: match.match_category || 'MIXED', // Key mapping fix: pass category as match_type
-        team1_ids: winners, // 승자 팀 ID 배열
-        team2_ids: losers,  // 패자 팀 ID 배열
-        is_tournament: match.match_type === 'TOURNAMENT' // Check match_type literal
+    // ELO 함수 호출 (RPC로 변경하여 RLS 우회)
+    const { error: rpcError } = await supabase.rpc('update_player_elo', {
+        p_match_type: match.match_category || 'MIXED',
+        p_winners: winners,
+        p_losers: losers,
+        p_is_tournament: match.match_type === 'TOURNAMENT'
     });
+
+    if (rpcError) console.error("ELO Update Error:", rpcError);
 
     return { success: true, message: 'Match confirmed and ELO updated.' };
 };

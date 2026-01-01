@@ -10,35 +10,37 @@ export default function GuestRegistrar({ onClose, onSuccess }: Props) {
     const [name, setName] = useState('');
     const [ntrp, setNtrp] = useState('3.0'); // Default
     const [gender, setGender] = useState('Male');
+    const [departureTime, setDepartureTime] = useState('23:00');
     const [loading, setLoading] = useState(false);
 
     const handleRegister = async () => {
-        if (!name) return alert("이름을 입력해주세요.");
+        if (!name.trim()) return alert("이름을 입력해주세요."); // 공백 입력 방지
         setLoading(true);
 
         try {
-            // [Security Fix] 클라이언트에서 ID를 만들지 않고 DB(Supabase)에 맡김
-            // 1. 게스트 밸런스 패치
+            // 1. 게스트 밸런스 패치 (NTRP + 0.25)
             const realScore = parseFloat(ntrp);
             const boostedScore = realScore + 0.25;
 
-            // 2. 프로필 생성 (Profiles Insert) -> ID는 DB가 자동 생성 (uuid_generate_v4)
-            // 주의: profiles 테이블의 id가 uuid 타입이고 default gen_random_uuid() 설정이 되어 있어야 함.
-            // 만약 안 되어 있다면, 수동 생성 로직 사용 (아래 fallback)
-
-            // 안전한 수동 ID 생성 함수 (HTTPS 여부 상관없이 작동)
-            const generateUUID = () => {
+            // 2. UUID 생성 (브라우저 내장 crypto 우선 사용, 실패 시 폴백)
+            const generateGuestId = () => {
+                if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+                    return crypto.randomUUID();
+                }
+                // Fallback for older browsers or non-secure contexts
                 return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
                     var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
                     return v.toString(16);
                 });
             };
-            const guestId = generateUUID();
+            const guestId = generateGuestId();
 
+            // 3. 프로필 생성 (Profiles Insert)
+            // 게스트는 Auth 유저가 아니므로 임의의 ID와 Email을 부여합니다.
             const { error: profileError } = await supabase.from('profiles').insert({
                 id: guestId,
-                email: `guest_${Date.now()}@temp.com`,
-                name: `${name} (G)`,
+                email: `guest_${guestId.slice(0, 8)}@temp.com`, // 고유성을 위해 ID 일부 사용
+                name: `${name.trim()} (G)`,
                 ntrp: boostedScore,
                 gender: gender,
                 is_guest: true,
@@ -52,13 +54,13 @@ export default function GuestRegistrar({ onClose, onSuccess }: Props) {
 
             if (profileError) throw profileError;
 
-            // 3. 대기열 즉시 등록
+            // 4. 대기열 즉시 등록
             const { error: queueError } = await supabase.from('queue').insert({
                 player_id: guestId,
-                joined_at: new Date().toISOString(), // [Fix] 필수 컬럼
+                joined_at: new Date().toISOString(),
                 is_active: true,
-                priority_score: 5000 + (boostedScore * 100),
-                departure_time: '23:00'
+                priority_score: 5000 + (boostedScore * 100), // 우선순위 점수 로직
+                departure_time: departureTime
             });
 
             if (queueError) throw queueError;
@@ -69,7 +71,7 @@ export default function GuestRegistrar({ onClose, onSuccess }: Props) {
 
         } catch (e: any) {
             console.error(e);
-            alert("등록 실패: " + e.message);
+            alert("등록 실패: " + (e.message || "알 수 없는 오류"));
         } finally {
             setLoading(false);
         }
@@ -77,8 +79,16 @@ export default function GuestRegistrar({ onClose, onSuccess }: Props) {
 
     return (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fadeIn">
-            <div className="bg-slate-800 border border-slate-600 rounded-2xl w-full max-w-sm p-6 shadow-2xl relative">
-                <button onClick={onClose} className="absolute top-4 right-4 text-slate-400 hover:text-white">✕</button>
+            {/* 배경 클릭 시 닫기 (선택 사항) */}
+            <div className="absolute inset-0" onClick={onClose}></div>
+
+            <div className="bg-slate-800 border border-slate-600 rounded-2xl w-full max-w-sm p-6 shadow-2xl relative z-10">
+                <button
+                    onClick={onClose}
+                    className="absolute top-4 right-4 text-slate-400 hover:text-white transition-colors"
+                >
+                    ✕
+                </button>
 
                 <h3 className="text-xl font-bold text-white mb-1">⚡ 게스트 3초 등록</h3>
                 <p className="text-xs text-slate-400 mb-6">게스트는 밸런스를 위해 NTRP +0.25로 적용됩니다.</p>
@@ -88,7 +98,7 @@ export default function GuestRegistrar({ onClose, onSuccess }: Props) {
                         <label className="block text-xs text-slate-400 mb-1">이름 (Name)</label>
                         <input
                             type="text"
-                            className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-white focus:border-lime-500 outline-none font-bold"
+                            className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-white focus:border-lime-500 outline-none font-bold placeholder-slate-600"
                             placeholder="예: 김테니"
                             value={name}
                             onChange={(e) => setName(e.target.value)}
@@ -99,7 +109,11 @@ export default function GuestRegistrar({ onClose, onSuccess }: Props) {
                     <div className="flex gap-4">
                         <div className="flex-1">
                             <label className="block text-xs text-slate-400 mb-1">실력 (NTRP)</label>
-                            <select value={ntrp} onChange={(e) => setNtrp(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-white text-xs font-bold">
+                            <select
+                                value={ntrp}
+                                onChange={(e) => setNtrp(e.target.value)}
+                                className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-white text-xs font-bold focus:border-lime-500 outline-none"
+                            >
                                 <option value="1.0">1.0 (입문)</option>
                                 <option value="2.0">2.0 (초보)</option>
                                 <option value="2.5">2.5 (초중급)</option>
@@ -109,24 +123,47 @@ export default function GuestRegistrar({ onClose, onSuccess }: Props) {
                                 <option value="4.5">4.5 (선출)</option>
                             </select>
                         </div>
+
                         <div className="flex-1">
                             <label className="block text-xs text-slate-400 mb-1">성별</label>
-                            <div className="flex bg-slate-900 rounded-xl p-1 border border-slate-700">
-                                <button onClick={() => setGender('Male')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${gender === 'Male' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}>남</button>
-                                <button onClick={() => setGender('Female')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${gender === 'Female' ? 'bg-rose-600 text-white' : 'text-slate-400'}`}>여</button>
+                            <div className="flex bg-slate-900 rounded-xl p-1 border border-slate-700 h-[42px]">
+                                <button
+                                    type="button"
+                                    onClick={() => setGender('Male')}
+                                    className={`flex-1 rounded-lg text-xs font-bold transition-all ${gender === 'Male' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                                >
+                                    남
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setGender('Female')}
+                                    className={`flex-1 rounded-lg text-xs font-bold transition-all ${gender === 'Female' ? 'bg-rose-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                                >
+                                    여
+                                </button>
                             </div>
                         </div>
+                    </div>
+
+                    <div>
+                        <label className="block text-xs text-slate-400 mb-1">가는 시간 (Departure)</label>
+                        <input
+                            type="time"
+                            value={departureTime}
+                            onChange={(e) => setDepartureTime(e.target.value)}
+                            className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-white font-bold outline-none focus:border-lime-500"
+                        />
                     </div>
 
                     <button
                         onClick={handleRegister}
                         disabled={loading}
-                        className="w-full py-4 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold rounded-xl mt-4 shadow-lg disabled:opacity-50"
+                        className="w-full py-4 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold rounded-xl mt-4 shadow-lg disabled:opacity-50 transition-all active:scale-[0.98]"
                     >
                         {loading ? "등록 중..." : "🚀 대기열 즉시 투입"}
                     </button>
                 </div>
             </div>
-        </div>
+        </div> // ✅ 기존에 중복되었던 </div> 태그 제거 완료
     );
 }
