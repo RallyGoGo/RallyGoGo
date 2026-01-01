@@ -69,8 +69,8 @@ export default function AdminBoard({ onClose }: Props) {
         const { data: matches } = await supabase
             .from('matches')
             .select('*')
-            // 'pending' (소문자 주의), 'FINISHED', 'DISPUTED' 상태 모두 가져옴
-            .in('status', ['FINISHED', 'pending', 'DISPUTED'])
+            // 'PENDING', 'FINISHED', 'DISPUTED' 상태 모두 가져옴
+            .in('status', ['FINISHED', 'PENDING', 'DISPUTED'])
             .order('end_time', { ascending: false })
             .limit(50);
 
@@ -124,7 +124,7 @@ export default function AdminBoard({ onClose }: Props) {
 
     const rollbackMatch = async (m: Match) => {
         // PENDING 상태일 때 '거절' 누르면 롤백이 아니라 그냥 삭제/취소임
-        const isPending = m.status.toLowerCase() === 'pending';
+        const isPending = m.status === 'PENDING';
         const msg = isPending
             ? "이 경기 결과를 거절하고 무효화하시겠습니까?"
             : `⚠️ WARNING: 이 경기 기록을 삭제하고 점수를 롤백하시겠습니까?`;
@@ -474,11 +474,11 @@ export default function AdminBoard({ onClose }: Props) {
                     {activeTab === 'MATCHES' && (
                         <div className="space-y-3">
                             {matches.map(m => (
-                                <div key={m.id} className={`bg-slate-800 p-4 rounded-xl border flex flex-col md:flex-row justify-between items-center gap-4 transition-all ${m.status === 'pending' ? 'border-amber-500/50 bg-amber-900/10' : 'border-slate-700'}`}>
+                                <div key={m.id} className={`bg-slate-800 p-4 rounded-xl border flex flex-col md:flex-row justify-between items-center gap-4 transition-all ${m.status === 'PENDING' ? 'border-amber-500/50 bg-amber-900/10' : 'border-slate-700'}`}>
                                     <div className="flex items-center gap-4 w-full md:w-auto justify-between md:justify-start">
 
                                         {/* 상태 뱃지 */}
-                                        {m.status.toLowerCase() === 'pending' && <span className="bg-amber-500 text-slate-900 text-[10px] px-2 py-0.5 rounded font-black animate-pulse whitespace-nowrap">⏳ 승인 대기</span>}
+                                        {m.status === 'PENDING' && <span className="bg-amber-500 text-slate-900 text-[10px] px-2 py-0.5 rounded font-black animate-pulse whitespace-nowrap">⏳ 승인 대기</span>}
                                         {m.status === 'DISPUTED' && <span className="bg-rose-500 text-white text-[10px] px-2 py-0.5 rounded font-black animate-pulse whitespace-nowrap">🚨 분쟁 중</span>}
 
                                         <div className="text-right">
@@ -499,7 +499,7 @@ export default function AdminBoard({ onClose }: Props) {
                                             <p className="text-xs text-slate-600">{new Date(m.end_time).toLocaleDateString()}</p>
                                         </div>
 
-                                        {m.status.toLowerCase() === 'pending' || m.status === 'DISPUTED' ? (
+                                        {m.status === 'PENDING' || m.status === 'DISPUTED' ? (
                                             <>
                                                 <button onClick={() => adminConfirmMatch(m.id)} className="bg-lime-600 hover:bg-lime-500 text-white px-3 py-2 rounded-lg text-xs font-bold shadow-lg border border-lime-400 transition-all whitespace-nowrap">
                                                     ⚡ 강제 승인

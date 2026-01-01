@@ -68,8 +68,9 @@ export default function CourtBoard({ user }: { user: any }) {
         const { data: matchData } = await supabase
             .from('matches')
             .select('*')
-            .neq('status', 'FINISHED')
-            .neq('status', 'completed'); // [수정 완료] 주석 해제하여 완료된 매치는 화면에서 제거함
+            .from('matches')
+            .select('*')
+            .neq('status', 'FINISHED'); // [Refactor] remove legacy 'completed' check
 
         if (!matchData) return;
 
@@ -317,7 +318,7 @@ export default function CourtBoard({ user }: { user: any }) {
 
                 // [Fix 2] 제3자에게 버튼 안 보이게 하기
                 // 내가 참가자이고(myTeam !== 0), 리포터와 다른 팀이어야 승인 권한(isOpponent) 가짐
-                const isOpponent = myTeam !== 0 && myTeam !== reporterTeam && match?.status === 'pending';
+                const isOpponent = myTeam !== 0 && myTeam !== reporterTeam && match?.status === 'PENDING';
 
                 return (
                     <div key={courtName} className={`relative p-6 backdrop-blur-md border rounded-2xl shadow-lg flex flex-col items-center justify-center min-h-[260px] transition-all ${match?.status === 'PLAYING' ? 'bg-lime-900/20 border-lime-500/30' : match?.status === 'DRAFT' ? 'bg-amber-900/20 border-amber-500/30' : match?.status === 'SCORING' ? 'bg-cyan-900/20 border-cyan-500/30' : 'bg-white/5 border-white/10'}`}>
@@ -332,7 +333,7 @@ export default function CourtBoard({ user }: { user: any }) {
                                     <button onClick={() => openManualModal(courtName)} disabled={loading} className="px-4 py-2 bg-lime-700 hover:bg-lime-600 text-white font-bold rounded-lg shadow-lg border border-lime-500 disabled:opacity-50 text-sm">👆 Manual</button>
                                 </div>
                             </div>
-                        ) : match.status === 'pending' ? (
+                        ) : match.status === 'PENDING' ? (
                             <div className="text-center w-full animate-pulse">
                                 <p className="text-lg font-bold text-amber-400 mb-2">⏳ Confirmation Pending</p>
                                 <div className="text-white text-2xl font-black mb-4 tracking-widest">{match.score_team1} : {match.score_team2}</div>

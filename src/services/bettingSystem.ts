@@ -65,7 +65,7 @@ export const BettingSystem = {
         const { data, error } = await supabase.rpc('place_bet', {
             p_match_id: matchId,
             p_user_id: userId,
-            p_pick_team: pick,
+            p_pick: pick,
             p_amount: amount,
             p_odds: odds
         });
