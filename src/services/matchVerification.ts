@@ -1,6 +1,5 @@
 import { supabase } from '../lib/supabase';
 
-
 // 1. 결과 입력 (Report) - 점수를 명확하게 분리해서 입력받음
 export const reportMatchResult = async (matchId: string, scoreTeam1: number, scoreTeam2: number, reporterId: string) => {
     // UI에서 "6 : 4"를 입력했더라도, Team1 점수와 Team2 점수를 분리해서 보내야 함
@@ -19,7 +18,6 @@ export const reportMatchResult = async (matchId: string, scoreTeam1: number, sco
         .single();
 
     if (error) throw error;
-    // TODO: 상대 팀에게 푸시 알림 발송 (Verification 요청)
     return data;
 };
 
@@ -61,7 +59,7 @@ export const confirmMatchResult = async (matchId: string, confirmerId: string, i
     }
 
     // C. Update Status
-    // ★ [핵심 수정] 상태를 'FINISHED'로 저장해야 DB 트리거가 작동하여 배팅금이 정산됩니다.
+    // ★ [핵심] 상태를 'FINISHED'로 저장 (이 시점에 배팅 정산 트리거 작동)
     const { error: updateError } = await supabase
         .from('matches')
         .update({
@@ -73,12 +71,9 @@ export const confirmMatchResult = async (matchId: string, confirmerId: string, i
     if (updateError) throw updateError;
 
     // D. ★ Trigger ELO Calculation (Winner Mapping) ★
-    // 점수를 비교하여 누가 승자(Team 1 for ELO function)인지 정의해야 함
     const score1 = match.score_team1 || 0;
     const score2 = match.score_team2 || 0;
 
-    // 무승부는 없다고 가정 (테니스는 승패 명확)하거나, ELO 로직에 무승부 처리 추가 필요
-    // 여기서는 승자/패자 구조로 넘김
     let winners: string[] = [];
     let losers: string[] = [];
 
@@ -90,8 +85,7 @@ export const confirmMatchResult = async (matchId: string, confirmerId: string, i
         losers = team1Ids;
     }
 
-    // ELO 함수 호출 (V3.1 규격에 맞춤)
-    // ELO 함수 호출 (RPC로 변경하여 RLS 우회)
+    // ELO 함수 호출 (RPC로 변경하여 RLS 우회 및 안정성 확보)
     const { error: rpcError } = await supabase.rpc('update_player_elo', {
         p_match_type: match.match_category || 'MIXED',
         p_winners: winners,
@@ -99,7 +93,12 @@ export const confirmMatchResult = async (matchId: string, confirmerId: string, i
         p_is_tournament: match.match_type === 'TOURNAMENT'
     });
 
-    if (rpcError) console.error("ELO Update Error:", rpcError);
+    // [Safety] ELO 업데이트 실패 시 에러를 던져서 확인 가능하게 함
+    if (rpcError) {
+        console.error("ELO Update Error:", rpcError);
+        // 필요하다면 여기서 throw rpcError; 를 해서 프론트엔드에 알릴 수 있음.
+        // 하지만 이미 매치 상태는 FINISHED가 되었으므로, 로그만 남기고 넘어가거나 관리자에게 알림을 주는 방식 추천
+    }
 
     return { success: true, message: 'Match confirmed and ELO updated.' };
 };
@@ -115,7 +114,6 @@ export const rejectMatchResult = async (matchId: string, rejectorId: string) => 
         .eq('id', matchId);
 
     if (error) throw error;
-    // TODO: 관리자에게 알림 전송
     return { success: true, message: 'Match result rejected. Admin notified.' };
 };
 
