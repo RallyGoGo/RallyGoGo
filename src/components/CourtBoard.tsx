@@ -540,4 +540,3 @@ export default function CourtBoard({ user }: { user: any }) {
         </div>
     );
 }
-```
