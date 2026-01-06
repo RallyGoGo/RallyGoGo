@@ -14,6 +14,7 @@ export default function GuestRegistrar({ onClose, onSuccess }: Props) {
     const [loading, setLoading] = useState(false);
 
     const handleRegister = async () => {
+        alert("📢 V3.5 Guest Logic Loaded! Checking for duplicates...");
         if (!name.trim()) return alert("이름을 입력해주세요."); // 공백 입력 방지
         setLoading(true);
 

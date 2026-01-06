@@ -96,6 +96,7 @@ export const confirmMatchResult = async (matchId: string, confirmerId: string, i
     }).filter((item): item is { player_id: string; priority: number } => item !== null);
 
     // E. EXECUTE REMOTE
+    console.log("🚀 Sending Queue Payload:", queueInserts);
     const requestId = uuidv4();
     const { data: rpcRes, error: rpcError } = await supabase.rpc('process_match_completion', {
         p_match_id: matchId,
