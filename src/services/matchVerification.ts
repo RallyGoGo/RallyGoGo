@@ -16,6 +16,7 @@ export const reportMatchResult = async (matchId: string, scoreTeam1: number, sco
             score_team2: scoreTeam2,
             reported_by: reporterId,
             status: 'PENDING',
+            court_name: null, // INSTANT RELEASE
             end_time: new Date().toISOString()
         })
         .eq('id', matchId)

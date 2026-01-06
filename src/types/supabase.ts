@@ -98,6 +98,24 @@ export interface Database {
                     created_at: string
                 }
             }
+            mvp_votes: {
+                Row: {
+                    id: string
+                    match_id: string
+                    voter_id: string
+                    target_id: string
+                    tag: string
+                    created_at: string
+                }
+                Insert: {
+                    id?: string
+                    match_id: string
+                    voter_id: string
+                    target_id: string
+                    tag: string
+                    created_at?: string
+                }
+            }
         }
     }
 }

@@ -14,20 +14,22 @@ export default function GuestRegistrar({ onClose, onSuccess }: Props) {
     const [loading, setLoading] = useState(false);
 
     const handleRegister = async () => {
-        alert("📢 V3.5 Guest Logic Loaded! Checking for duplicates...");
         if (!name.trim()) return alert("이름을 입력해주세요."); // 공백 입력 방지
         setLoading(true);
 
         try {
-            // 1. 게스트 밸런스 패치 (NTRP + 0.25)
+            // 1. 게스트 밸런스 패치 (NTRP + 0.25) - 기존 로직 유지
             const realScore = parseFloat(ntrp);
             const boostedScore = realScore + 0.25;
+            const targetName = `${name.trim()} (G)`;
 
-            // [CRITICAL FIX] 중복 방지 로직: 이름으로 기존 게스트 검색
+            // ---------------------------------------------------------
+            // 🔍 STEP 1: Profile Handling (Reuse Strategy)
+            // ---------------------------------------------------------
             const { data: existingGuest, error: searchError } = await supabase
                 .from('profiles')
                 .select('id, name')
-                .eq('name', `${name.trim()} (G)`)
+                .eq('name', targetName)
                 .eq('is_guest', true)
                 .maybeSingle();
 
@@ -36,34 +38,31 @@ export default function GuestRegistrar({ onClose, onSuccess }: Props) {
             let guestId: string;
 
             if (existingGuest) {
-                // A. 기존 게스트 재사용
-                console.log(`♻️ Found existing guest: ${existingGuest.name} (${existingGuest.id})`);
+                // [Condition A] Reuse existing ID
+                console.log(`♻️ Returning Guest Found: ${existingGuest.name} (${existingGuest.id})`);
                 guestId = existingGuest.id;
             } else {
-                // B. 신규 게스트 생성
-                // 2. UUID 생성
+                // [Condition B] Create New Profile
                 const generateGuestId = () => {
                     if (typeof crypto !== 'undefined' && crypto.randomUUID) {
                         return crypto.randomUUID();
                     }
                     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-                        var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+                        const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
                         return v.toString(16);
                     });
                 };
                 guestId = generateGuestId();
-
-                // 3. 프로필 생성 (Profiles Insert)
                 const initialElo = Math.round(boostedScore * 400);
 
                 const { error: profileError } = await supabase.from('profiles').insert({
                     id: guestId,
                     email: `guest_${guestId.slice(0, 8)}@temp.com`,
-                    name: `${name.trim()} (G)`,
+                    name: targetName,
                     ntrp: boostedScore,
                     gender: gender,
                     is_guest: true,
-                    role: 'member', // Default role
+                    role: 'member',
                     elo_men_doubles: initialElo,
                     elo_women_doubles: initialElo,
                     elo_mixed_doubles: initialElo,
@@ -72,14 +71,36 @@ export default function GuestRegistrar({ onClose, onSuccess }: Props) {
                 });
 
                 if (profileError) throw profileError;
+                console.log(`✨ New Guest Profile Created: ${targetName} (${guestId})`);
             }
 
-            // 4. 대기열 즉시 등록
+            // ---------------------------------------------------------
+            // 🛑 STEP 2: Queue Handling (Block Duplicates Strategy)
+            // ---------------------------------------------------------
+
+            // Check if ALREADY in queue
+            const { data: queueCheck, error: queueCheckError } = await supabase
+                .from('queue')
+                .select('id')
+                .eq('player_id', guestId)
+                .eq('is_active', true)
+                .maybeSingle();
+
+            if (queueCheckError && queueCheckError.code !== 'PGRST116') throw queueCheckError;
+
+            if (queueCheck) {
+                // [Condition A] Already in Queue -> STOP
+                alert("🚫 이미 대기열에 등록된 선수입니다!");
+                onClose(); // Close modal nicely
+                return; // Stop execution
+            }
+
+            // [Condition B] Not in Queue -> Insert
             const { error: queueError } = await supabase.from('queue').insert({
                 player_id: guestId,
                 joined_at: new Date().toISOString(),
                 is_active: true,
-                priority_score: 5000 + (boostedScore * 100), // 우선순위 점수 로직
+                priority_score: 5000 + (boostedScore * 100), // Original Priority Logic
                 departure_time: departureTime
             });
 
@@ -99,7 +120,7 @@ export default function GuestRegistrar({ onClose, onSuccess }: Props) {
 
     return (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fadeIn">
-            {/* 배경 클릭 시 닫기 (선택 사항) */}
+            {/* 배경 클릭 시 닫기 */}
             <div className="absolute inset-0" onClick={onClose}></div>
 
             <div className="bg-slate-800 border border-slate-600 rounded-2xl w-full max-w-sm p-6 shadow-2xl relative z-10">
@@ -184,6 +205,6 @@ export default function GuestRegistrar({ onClose, onSuccess }: Props) {
                     </button>
                 </div>
             </div>
-        </div> // ✅ 기존에 중복되었던 </div> 태그 제거 완료
+        </div>
     );
 }

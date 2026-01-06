@@ -27,6 +27,8 @@ interface EnrichedMatch extends Match {
     p4_name: string;
 }
 
+import MatchReviewModal from './MatchReviewModal';
+
 export default function CourtBoard({ user }: { user: any }) {
     const [courts, setCourts] = useState<string[]>(['Court A', 'Court B']);
     const [activeMatches, setActiveMatches] = useState<EnrichedMatch[]>([]);
@@ -45,6 +47,20 @@ export default function CourtBoard({ user }: { user: any }) {
     const [selectedManualPlayers, setSelectedManualPlayers] = useState<QueueCandidate[]>([]);
     const [queueCandidates, setQueueCandidates] = useState<QueueCandidate[]>([]);
     const [searchTerm, setSearchTerm] = useState('');
+
+    // [New] Match Review Modal State
+    const [matchReviewTarget, setMatchReviewTarget] = useState<EnrichedMatch | null>(null);
+
+    // [New] Notification Banner Logic
+    // Find pending matches involving user that are NOT on any court (Instant Released)
+    const pendingReviewMatch = user ? activeMatches.find(m =>
+        m.status === 'PENDING' &&
+        m.court_name === null &&
+        ([m.player_1, m.player_2, m.player_3, m.player_4].includes(user.id) || matchReviewTarget?.id === m.id)
+    ) : null;
+
+    // Check if I am the opponent (needs to confirm) or reporter (waiting)
+    const isPendingOpponent = pendingReviewMatch && pendingReviewMatch.reported_by !== user.id;
 
     useEffect(() => {
         fetchMatches();
@@ -360,6 +376,23 @@ export default function CourtBoard({ user }: { user: any }) {
 
     return (
         <div className="grid grid-cols-1 gap-4">
+            {/* 🔔 Notification Banner */}
+            {isPendingOpponent && pendingReviewMatch && (
+                <div
+                    onClick={() => setMatchReviewTarget(pendingReviewMatch)}
+                    className="bg-gradient-to-r from-amber-500 to-orange-500 p-4 rounded-2xl shadow-xl flex items-center justify-between cursor-pointer animate-pulse hover:scale-[1.02] transition-transform"
+                >
+                    <div className="flex items-center gap-3">
+                        <span className="text-3xl bg-white/20 p-2 rounded-full">🔔</span>
+                        <div>
+                            <p className="font-black text-white text-lg leading-tight">Match Confirmation Required</p>
+                            <p className="text-amber-100 text-xs font-bold">Court Released • Review Score & Vote MVP</p>
+                        </div>
+                    </div>
+                    <button className="bg-white text-orange-600 font-black px-4 py-2 rounded-xl shadow-md text-sm">Review Now</button>
+                </div>
+            )}
+
             {courts.map((courtName) => {
                 const match = activeMatches.find(m => m.court_name === courtName);
                 const myTeam = user ? getMyTeam(match, user.id) : 0;
@@ -483,6 +516,16 @@ export default function CourtBoard({ user }: { user: any }) {
                         </div>
                     </div>
                 </div>
+            )}
+
+            {/* MATCH REVIEW MODAL */}
+            {matchReviewTarget && (
+                <MatchReviewModal
+                    match={matchReviewTarget}
+                    user={user}
+                    onClose={() => setMatchReviewTarget(null)}
+                    onSuccess={() => { fetchMatches(); setMatchReviewTarget(null); }}
+                />
             )}
         </div>
     );
