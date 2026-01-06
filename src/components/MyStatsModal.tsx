@@ -79,7 +79,7 @@ export default function MyStatsModal({ user, onClose, onUpdate }: Props) {
     const [myProfile, setMyProfile] = useState<any>(null);
     const [bestPartner, setBestPartner] = useState<{ name: string, wins: number } | null>(null);
     const [worstRival, setWorstRival] = useState<{ name: string, losses: number } | null>(null);
-    const [totalStats, setTotalStats] = useState({ wins: 0, losses: 0, winRate: 0 });
+    const [totalStats, setTotalStats] = useState({ wins: 0, losses: 0, draws: 0, winRate: 0 });
 
     // [New] Graph & Badges
     const [eloHistory, setEloHistory] = useState<number[]>([]);
@@ -91,8 +91,8 @@ export default function MyStatsModal({ user, onClose, onUpdate }: Props) {
 
     const fetchMyData = async () => {
         setLoading(true);
-        // 1. Load Profile
-        const { data: profile } = await supabase.from('profiles').select('name, emoji, avatar_url, gender, elo_men_doubles, elo_women_doubles, elo_mixed_doubles, elo_singles').eq('id', user.id).single();
+        // 1. Load Profile (including stats columns)
+        const { data: profile } = await supabase.from('profiles').select('name, emoji, avatar_url, gender, elo_men_doubles, elo_women_doubles, elo_mixed_doubles, elo_singles, total_wins, total_losses, total_draws, winning_streak').eq('id', user.id).maybeSingle();
         if (profile) {
             setName(profile.name);
             setSelectedEmoji(profile.emoji || '🎾');
@@ -124,13 +124,18 @@ export default function MyStatsModal({ user, onClose, onUpdate }: Props) {
                 else { l++; enemies.forEach(e => { if (e) rivalStats[e] = (rivalStats[e] || 0) + 1; }); }
             });
 
-            setTotalStats({ wins: w, losses: l, winRate: (w + l) > 0 ? Math.round((w / (w + l)) * 100) : 0 });
+            // [Fix] Prefer DB-stored stats if available, fallback to calculated
+            const finalWins = profile?.total_wins ?? w;
+            const finalLosses = profile?.total_losses ?? l;
+            const finalDraws = profile?.total_draws ?? 0;
+            const totalGames = finalWins + finalLosses + finalDraws;
+            setTotalStats({ wins: finalWins, losses: finalLosses, draws: finalDraws, winRate: totalGames > 0 ? Math.round((finalWins / totalGames) * 100) : 0 });
 
             let bestPid = Object.keys(partnerStats).reduce((a, b) => partnerStats[a] > partnerStats[b] ? a : b, '');
-            if (bestPid) { const { data } = await supabase.from('profiles').select('name').eq('id', bestPid).single(); if (data) setBestPartner({ name: data.name, wins: partnerStats[bestPid] }); }
+            if (bestPid) { const { data } = await supabase.from('profiles').select('name').eq('id', bestPid).maybeSingle(); if (data) setBestPartner({ name: data.name, wins: partnerStats[bestPid] }); }
 
             let worstPid = Object.keys(rivalStats).reduce((a, b) => rivalStats[a] > rivalStats[b] ? a : b, '');
-            if (worstPid) { const { data } = await supabase.from('profiles').select('name').eq('id', worstPid).single(); if (data) setWorstRival({ name: data.name, losses: rivalStats[worstPid] }); }
+            if (worstPid) { const { data } = await supabase.from('profiles').select('name').eq('id', worstPid).maybeSingle(); if (data) setWorstRival({ name: data.name, losses: rivalStats[worstPid] }); }
         }
 
         // 3. [New] Load ELO History (Graph)
@@ -237,7 +242,7 @@ export default function MyStatsModal({ user, onClose, onUpdate }: Props) {
                                 <div className="bg-slate-900/50 border border-slate-700 rounded-xl p-3 text-center">
                                     <p className="text-xs text-slate-500 mb-1">Win Rate</p>
                                     <p className="text-xl font-black text-lime-400">{totalStats.winRate}%</p>
-                                    <p className="text-[10px] text-slate-400">{totalStats.wins}W - {totalStats.losses}L</p>
+                                    <p className="text-[10px] text-slate-400">{totalStats.wins}W - {totalStats.draws}D - {totalStats.losses}L</p>
                                 </div>
                                 <div className="bg-slate-900/50 border border-slate-700 rounded-xl p-3 text-center flex flex-col justify-center">
                                     {bestPartner ? <div><p className="text-xs text-indigo-400 font-bold">Best Partner</p><p className="text-sm font-bold text-white">{bestPartner.name}</p></div> : <p className="text-xs text-slate-500">Play more games!</p>}

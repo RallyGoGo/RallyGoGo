@@ -15,12 +15,20 @@ ALTER TABLE public.queue ADD COLUMN IF NOT EXISTS priority_score INTEGER DEFAULT
 ALTER TABLE public.queue ADD COLUMN IF NOT EXISTS departure_time VARCHAR;
 ALTER TABLE public.queue ADD COLUMN IF NOT EXISTS joined_at TIMESTAMP WITH TIME ZONE DEFAULT now();
 
+-- 2b. Add unique constraint for upsert support
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'queue_player_id_unique') THEN
+        ALTER TABLE public.queue ADD CONSTRAINT queue_player_id_unique UNIQUE (player_id);
+    END IF;
+END $$;
+
 -- 3. Matches Table Columns
 ALTER TABLE public.matches ADD COLUMN IF NOT EXISTS court_name VARCHAR;
 ALTER TABLE public.matches ADD COLUMN IF NOT EXISTS match_category VARCHAR;
 ALTER TABLE public.matches ADD COLUMN IF NOT EXISTS match_type VARCHAR DEFAULT 'REGULAR';
 ALTER TABLE public.matches ADD COLUMN IF NOT EXISTS start_time TIMESTAMP WITH TIME ZONE;
 ALTER TABLE public.matches ADD COLUMN IF NOT EXISTS end_time TIMESTAMP WITH TIME ZONE;
+ALTER TABLE public.matches ADD COLUMN IF NOT EXISTS betting_closes_at TIMESTAMP WITH TIME ZONE;
 
 -- 4. Update Status Constraint
 ALTER TABLE public.matches DROP CONSTRAINT IF EXISTS matches_status_check;

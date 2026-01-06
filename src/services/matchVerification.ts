@@ -1,123 +1,120 @@
 import { supabase } from '../lib/supabase';
+import { v4 as uuidv4 } from 'uuid';
+import { calculateMatchDeltas, PlayerInput } from '../utils/glicko';
+import { Database } from '../types/supabase';
 
-// 1. 결과 입력 (Report) - 점수를 명확하게 분리해서 입력받음
+// Helper types
+type Profile = Database['public']['Tables']['profiles']['Row'];
+type Match = Database['public']['Tables']['matches']['Row'];
+
+// 1. Report Match Result
 export const reportMatchResult = async (matchId: string, scoreTeam1: number, scoreTeam2: number, reporterId: string) => {
-    // UI에서 "6 : 4"를 입력했더라도, Team1 점수와 Team2 점수를 분리해서 보내야 함
-
     const { data, error } = await supabase
         .from('matches')
         .update({
-            score_team1: scoreTeam1, // DB 컬럼: integer
-            score_team2: scoreTeam2, // DB 컬럼: integer
+            score_team1: scoreTeam1,
+            score_team2: scoreTeam2,
             reported_by: reporterId,
-            status: 'PENDING', // [수정] 대문자 통일 (안전)
+            status: 'PENDING',
             end_time: new Date().toISOString()
         })
         .eq('id', matchId)
         .select()
-        .single();
+        .maybeSingle();
 
     if (error) throw error;
     return data;
 };
 
-// 2. 결과 승인 (Confirm) - 승패 판독 및 ELO 반영
+// 2. Confirm Match Result (V3.5)
 export const confirmMatchResult = async (matchId: string, confirmerId: string, isAdmin: boolean = false) => {
-    // A. Fetch Match Data
-    const { data: match, error } = await supabase
+    // A. FETCH MATCH
+    const { data: match, error: matchError } = await supabase
         .from('matches')
         .select('*')
         .eq('id', matchId)
-        .single();
+        .maybeSingle();
 
-    if (error || !match) throw new Error('Match not found');
+    if (matchError || !match) throw new Error('Match not found');
+    if (match.status === 'FINISHED') throw new Error('Match already finished');
 
-    // [수정] 이미 끝난 경기 체크 (FINISHED)
-    if (match.status === 'FINISHED') throw new Error('Match already confirmed');
+    const m = match as Match; // Cast to Strict Type
 
-    // B. Security Check (상대방 검증)
-    // DB 컬럼이 player_1, player_2 (Team1) / player_3, player_4 (Team2) 라고 가정
-    const team1Ids = [match.player_1, match.player_2].filter(Boolean);
-    const team2Ids = [match.player_3, match.player_4].filter(Boolean);
+    // B. SECURITY CHECK
+    const team1Ids = [m.player_1, m.player_2].filter(Boolean) as string[];
+    const team2Ids = [m.player_3, m.player_4].filter(Boolean) as string[];
+    const allPlayerIds = [...team1Ids, ...team2Ids];
 
     if (!isAdmin) {
-        if (!match.reported_by) throw new Error('Match has not been reported yet.');
-
-        const isReporterTeam1 = team1Ids.includes(match.reported_by);
-        const isConfirmerTeam1 = team1Ids.includes(confirmerId);
-
-        // 같은 팀 자가 승인 방지
-        if (isReporterTeam1 === isConfirmerTeam1) {
-            throw new Error('Permission denied: Only the opposing team can confirm the result.');
-        }
-
-        // 제3자 승인 방지
-        const isParticipant = [...team1Ids, ...team2Ids].includes(confirmerId);
-        if (!isParticipant) {
-            throw new Error('Permission denied: You are not a participant.');
-        }
+        if (!m.reported_by) throw new Error('Match not reported');
+        if (!allPlayerIds.includes(confirmerId)) throw new Error('Permission denied');
     }
 
-    // C. Update Status
-    // ★ [핵심] 상태를 'FINISHED'로 저장 (이 시점에 배팅 정산 트리거 작동)
-    const { error: updateError } = await supabase
-        .from('matches')
-        .update({
-            status: 'FINISHED',
-            confirmed_by: confirmerId
-        })
-        .eq('id', matchId);
+    // C. FETCH PROFILES
+    const { data: profiles, error: pError } = await supabase
+        .from('profiles')
+        .select('*') // Select all for simplicity
+        .in('id', allPlayerIds);
 
-    if (updateError) throw updateError;
+    if (pError || !profiles) throw new Error('Failed to load profiles');
+    const getP = (id: string) => (profiles as Profile[]).find(p => p.id === id);
 
-    // D. ★ Trigger ELO Calculation (Winner Mapping) ★
-    const score1 = match.score_team1 || 0;
-    const score2 = match.score_team2 || 0;
-
-    let winners: string[] = [];
-    let losers: string[] = [];
-
-    if (score1 > score2) {
-        winners = team1Ids;
-        losers = team2Ids;
-    } else {
-        winners = team2Ids;
-        losers = team1Ids;
-    }
-
-    // ELO 함수 호출 (RPC로 변경하여 RLS 우회 및 안정성 확보)
-    const { error: rpcError } = await supabase.rpc('update_player_elo', {
-        p_match_type: match.match_category || 'MIXED',
-        p_winners: winners,
-        p_losers: losers,
-        p_is_tournament: match.match_type === 'TOURNAMENT'
+    // D. CALCULATE LOGIC
+    // ELO
+    const toInput = (ids: string[]): PlayerInput[] => ids.map(id => {
+        const p = getP(id);
+        // Default to 1200 if missing
+        return {
+            id,
+            rating: p?.elo_mixed_doubles ?? 1200,
+            isGuest: p?.is_guest ?? false
+        };
     });
 
-    // [Safety] ELO 업데이트 실패 시 에러를 던져서 확인 가능하게 함
-    if (rpcError) {
-        console.error("ELO Update Error:", rpcError);
-        // 필요하다면 여기서 throw rpcError; 를 해서 프론트엔드에 알릴 수 있음.
-        // 하지만 이미 매치 상태는 FINISHED가 되었으므로, 로그만 남기고 넘어가거나 관리자에게 알림을 주는 방식 추천
-    }
+    const eloUpdates = calculateMatchDeltas(
+        toInput(team1Ids),
+        toInput(team2Ids),
+        m.score_team1 || 0,
+        m.score_team2 || 0
+    );
 
-    return { success: true, message: 'Match confirmed and ELO updated.' };
+    // QUEUE
+    const queueInserts = allPlayerIds.map(id => {
+        const p = getP(id);
+        if (!p) return null;
+
+        const nextGameCount = (p.games_played_today || 0) + 1;
+        // Priority Algo: 10000 - (Games * 1000) + (NTRP * 10) + (Guest Bonus)
+        const priority = 10000 - (nextGameCount * 1000) + ((p.ntrp || 3.0) * 10) + (p.is_guest ? 100 : 0);
+
+        return { player_id: id, priority };
+    }).filter(Boolean);
+
+    // E. EXECUTE REMOTE
+    const requestId = uuidv4();
+    const { data: rpcRes, error: rpcError } = await supabase.rpc('process_match_completion', {
+        p_match_id: matchId,
+        p_reporter_id: confirmerId, // Confirmer signs the transaction
+        p_team1_score: m.score_team1,
+        p_team2_score: m.score_team2,
+        p_elo_updates: eloUpdates,
+        p_queue_inserts: queueInserts,
+        p_client_request_id: requestId
+    });
+
+    if (rpcError) throw rpcError;
+    return { success: true, message: 'Tx Complete', debug: rpcRes };
 };
 
-// 3. 결과 거절 (Reject)
 export const rejectMatchResult = async (matchId: string, rejectorId: string) => {
     const { error } = await supabase
         .from('matches')
-        .update({
-            status: 'DISPUTED', // [수정] 대문자 통일
-            confirmed_by: null
-        })
+        .update({ status: 'DISPUTED', confirmed_by: null })
         .eq('id', matchId);
-
     if (error) throw error;
-    return { success: true, message: 'Match result rejected. Admin notified.' };
+    return { success: true };
 };
 
-// 4. 관리자 강제 승인
 export const adminForceConfirm = async (matchId: string, adminId: string) => {
     return await confirmMatchResult(matchId, adminId, true);
 };

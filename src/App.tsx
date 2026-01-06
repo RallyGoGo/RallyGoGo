@@ -50,7 +50,7 @@ export default function App() {
   }, []);
 
   const fetchProfile = async (userId: string) => {
-    const { data } = await supabase.from('profiles').select('name, ntrp, gender, emoji').eq('id', userId).single();
+    const { data } = await supabase.from('profiles').select('name, ntrp, gender, emoji').eq('id', userId).maybeSingle();
     if (data) setProfile(data);
   };
 

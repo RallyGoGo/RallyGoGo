@@ -70,7 +70,7 @@ export default function JoinQueue({ user, profile }: JoinQueueProps) {
                     .from('profiles')
                     .select('games_played_today')
                     .eq('id', user.id)
-                    .single();
+                    .maybeSingle();
 
                 const gamesPlayed = freshProfile?.games_played_today || 0;
                 let calculatedScore = 1000 - (gamesPlayed * 100);

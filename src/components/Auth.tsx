@@ -26,47 +26,76 @@ export default function Auth() {
         { val: "5.0", label: "5.0+ (프로 선수급)" },
     ];
 
+    // ★ [Fix] Use consistent NTRP * 400 formula
     const getInitialElo = (ntrpValue: string) => {
         const n = parseFloat(ntrpValue);
-        if (n <= 2.0) return 1000;
-        if (n === 2.5) return 1100;
-        if (n === 3.0) return 1250;
-        if (n === 3.5) return 1400;
-        if (n === 4.0) return 1500;
-        if (n >= 4.5) return 1600;
-        return 1250;
+        return Math.round(n * 400); // NTRP 3.0 = 1200, 3.5 = 1400, 4.0 = 1600
     };
 
     const handleAuth = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
-        setErrorMsg(null); // 초기화
+        setErrorMsg(null);
 
         try {
             if (isSignUp) {
+                // ★ [Guest→Member Conversion] 기존 게스트 프로필 검색
+                // 이름 기반으로 검색 (게스트 이름은 "홍길동 (G)" 형식)
+                const searchName = `${name.trim()} (G)`;
+                const { data: existingGuest } = await supabase
+                    .from('profiles')
+                    .select('*')
+                    .eq('name', searchName)
+                    .eq('is_guest', true)
+                    .maybeSingle();
+
+                // 1. Auth 계정 생성
                 const { data, error } = await supabase.auth.signUp({ email, password });
                 if (error) throw error;
 
                 if (data.user) {
-                    const initialScore = getInitialElo(ntrp);
-                    const { error: profileError } = await supabase.from('profiles').insert({
-                        id: data.user.id,
-                        email: email,
-                        name: name,
-                        ntrp: parseFloat(ntrp),
-                        gender: gender,
-                        elo_men_doubles: initialScore,
-                        elo_women_doubles: initialScore,
-                        elo_mixed_doubles: initialScore,
-                        elo_singles: initialScore,
-                        is_guest: false
-                    });
+                    if (existingGuest) {
+                        // ★ [Case A] 게스트 → 회원 전환 (ELO 승계!)
+                        const { error: updateError } = await supabase
+                            .from('profiles')
+                            .update({
+                                id: data.user.id,  // Auth ID로 변경
+                                email: email,
+                                name: name.trim(),  // "(G)" 제거
+                                is_guest: false,
+                                // ELO, total_games_history, elo_history는 그대로 유지!
+                            })
+                            .eq('id', existingGuest.id);
 
-                    if (profileError) {
-                        setErrorMsg('프로필 저장 실패: ' + profileError.message);
+                        if (updateError) {
+                            setErrorMsg('게스트 전환 실패: ' + updateError.message);
+                        } else {
+                            const inheritedElo = existingGuest.elo_mixed_doubles || getInitialElo(ntrp);
+                            alert(`✅ 게스트 계정이 회원으로 전환되었습니다!\n\n승계된 ELO: ${inheritedElo}점\n경기 기록: ${existingGuest.total_games_history || 0}경기`);
+                            setIsSignUp(false);
+                        }
                     } else {
-                        alert(`가입 성공! 시작 점수: ${initialScore}점`);
-                        setIsSignUp(false);
+                        // ★ [Case B] 신규 회원 생성 (기존 로직)
+                        const initialScore = getInitialElo(ntrp);
+                        const { error: profileError } = await supabase.from('profiles').insert({
+                            id: data.user.id,
+                            email: email,
+                            name: name,
+                            ntrp: parseFloat(ntrp),
+                            gender: gender,
+                            elo_men_doubles: initialScore,
+                            elo_women_doubles: initialScore,
+                            elo_mixed_doubles: initialScore,
+                            elo_singles: initialScore,
+                            is_guest: false
+                        });
+
+                        if (profileError) {
+                            setErrorMsg('프로필 저장 실패: ' + profileError.message);
+                        } else {
+                            alert(`가입 성공! 시작 점수: ${initialScore}점`);
+                            setIsSignUp(false);
+                        }
                     }
                 }
             } else {

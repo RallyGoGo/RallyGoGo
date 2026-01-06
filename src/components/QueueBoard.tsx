@@ -19,12 +19,22 @@ type QueueItem = {
     } | null;
 };
 
+// [New] Type for players currently in a match
+type InGamePlayer = {
+    id: string;
+    name: string;
+    court_name: string;
+    status: string;
+};
+
 export default function QueueBoard({ user }: { user: User }) {
     const [queue, setQueue] = useState<QueueItem[]>([]);
+    const [inGamePlayers, setInGamePlayers] = useState<InGamePlayer[]>([]);
     const [loading, setLoading] = useState(true);
     const [now, setNow] = useState(new Date());
 
     const fetchQueue = async () => {
+        // 1. Fetch Waiting Queue
         const { data, error } = await supabase
             .from('queue')
             .select(`
@@ -34,6 +44,40 @@ export default function QueueBoard({ user }: { user: User }) {
             .eq('is_active', true);
 
         if (!error) setQueue(data as any || []);
+
+        // 2. [New] Fetch In-Game Players
+        const { data: matchData } = await supabase
+            .from('matches')
+            .select('id, player_1, player_2, player_3, player_4, court_name, status')
+            .in('status', ['DRAFT', 'PLAYING', 'SCORING', 'PENDING']);
+
+        if (matchData && matchData.length > 0) {
+            const allPlayerIds = new Set<string>();
+            matchData.forEach((m: any) => {
+                [m.player_1, m.player_2, m.player_3, m.player_4].filter(Boolean).forEach(id => allPlayerIds.add(id));
+            });
+
+            if (allPlayerIds.size > 0) {
+                const { data: profiles } = await supabase.from('profiles').select('id, name').in('id', Array.from(allPlayerIds));
+                const profileMap = new Map(profiles?.map((p: any) => [p.id, p.name]));
+
+                const playingList: InGamePlayer[] = [];
+                matchData.forEach((m: any) => {
+                    [m.player_1, m.player_2, m.player_3, m.player_4].filter(Boolean).forEach(pid => {
+                        playingList.push({
+                            id: pid,
+                            name: (profileMap.get(pid) as string) || 'Unknown',
+                            court_name: m.court_name,
+                            status: m.status
+                        });
+                    });
+                });
+                setInGamePlayers(playingList);
+            }
+        } else {
+            setInGamePlayers([]);
+        }
+
         setLoading(false);
     };
 
@@ -194,6 +238,23 @@ export default function QueueBoard({ user }: { user: User }) {
                     })
                 )}
             </div>
+
+            {/* [New] In-Game Players Section */}
+            {inGamePlayers.length > 0 && (
+                <div className="mt-4 pt-4 border-t border-slate-700">
+                    <h4 className="text-sm font-bold text-lime-400 mb-2 flex items-center gap-2">
+                        <span>🎾</span> 경기 중 <span className="text-slate-400 text-xs">({inGamePlayers.length}명)</span>
+                    </h4>
+                    <div className="flex flex-wrap gap-2">
+                        {inGamePlayers.map((p, idx) => (
+                            <div key={p.id + idx} className="bg-lime-900/30 border border-lime-500/30 px-3 py-1.5 rounded-lg flex items-center gap-2 text-xs">
+                                <span className="text-white font-bold">{p.name}</span>
+                                <span className="text-lime-400 text-[10px]">{p.court_name}</span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

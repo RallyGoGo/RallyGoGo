@@ -37,18 +37,21 @@ export default function GuestRegistrar({ onClose, onSuccess }: Props) {
 
             // 3. 프로필 생성 (Profiles Insert)
             // 게스트는 Auth 유저가 아니므로 임의의 ID와 Email을 부여합니다.
+            // ★ [Fix] Calculate initial ELO from NTRP (NTRP * 400)
+            const initialElo = Math.round(boostedScore * 400);
+
             const { error: profileError } = await supabase.from('profiles').insert({
                 id: guestId,
-                email: `guest_${guestId.slice(0, 8)}@temp.com`, // 고유성을 위해 ID 일부 사용
+                email: `guest_${guestId.slice(0, 8)}@temp.com`,
                 name: `${name.trim()} (G)`,
                 ntrp: boostedScore,
                 gender: gender,
                 is_guest: true,
                 role: 'member',
-                elo_men_doubles: 1200,
-                elo_women_doubles: 1200,
-                elo_mixed_doubles: 1200,
-                elo_singles: 1200,
+                elo_men_doubles: initialElo,
+                elo_women_doubles: initialElo,
+                elo_mixed_doubles: initialElo,
+                elo_singles: initialElo,
                 games_played_today: 0
             });
 

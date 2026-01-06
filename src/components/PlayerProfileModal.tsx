@@ -1,20 +1,21 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { Database } from '../types/supabase';
 
 type Props = {
     playerId: string;
     onClose: () => void;
 };
 
-// 📈 Simple SVG Chart (Same as before)
-const EloChart = ({ history }: { history: any[] }) => {
+// 📈 Simple SVG Chart
+const EloChart = ({ history }: { history: Database['public']['Tables']['elo_history']['Row'][] }) => {
     if (!history || history.length < 2) return <div className="h-32 flex items-center justify-center text-slate-500 text-xs">Not enough matches for graph</div>;
     const width = 300; const height = 100;
     const categories = {
         'MEN_D': { color: '#3b82f6', data: [] as number[] }, 'WOMEN_D': { color: '#f43f5e', data: [] as number[] },
         'MIXED': { color: '#9333ea', data: [] as number[] }, 'SINGLES': { color: '#10b981', data: [] as number[] }
     };
-    history.forEach(h => { if (categories[h.match_category as keyof typeof categories]) categories[h.match_category as keyof typeof categories].data.push(h.elo_score); });
+    history.forEach(h => { if (categories[h.match_type as keyof typeof categories]) categories[h.match_type as keyof typeof categories].data.push(h.elo_score); });
     const allScores = history.map(h => h.elo_score);
     const minScore = Math.min(...allScores) - 50; const maxScore = Math.max(...allScores) + 50; const range = maxScore - minScore;
 
@@ -41,37 +42,43 @@ const EloChart = ({ history }: { history: any[] }) => {
 };
 
 export default function PlayerProfileModal({ playerId, onClose }: Props) {
-    const [profile, setProfile] = useState<any>(null);
-    const [stats, setStats] = useState({ wins: 0, losses: 0, winRate: 0, total: 0 });
+    type ProfileRaw = Database['public']['Tables']['profiles']['Row'];
+    const [profile, setProfile] = useState<ProfileRaw | null>(null);
+    const [stats, setStats] = useState({ wins: 0, losses: 0, draws: 0, winRate: 0, total: 0 });
     const [mvpTags, setMvpTags] = useState<{ tag: string; count: number }[]>([]);
-    const [eloHistory, setEloHistory] = useState<any[]>([]);
+    const [eloHistory, setEloHistory] = useState<Database['public']['Tables']['elo_history']['Row'][]>([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         const fetchDetail = async () => {
             setLoading(true);
-            const { data: p } = await supabase.from('profiles').select('*').eq('id', playerId).single();
+            const { data: p } = await supabase.from('profiles').select('*').eq('id', playerId).maybeSingle();
             setProfile(p);
 
             const { data: matches } = await supabase.from('matches').select('winner_team, player_1, player_2, player_3, player_4').eq('status', 'FINISHED').or(`player_1.eq.${playerId},player_2.eq.${playerId},player_3.eq.${playerId},player_4.eq.${playerId}`);
             if (matches) {
-                let w = 0, l = 0;
-                matches.forEach((m: any) => {
+                let w = 0, l = 0, d = 0;
+                matches.forEach((m) => {
                     const isTeam1 = (m.player_1 === playerId || m.player_2 === playerId);
-                    if (m.winner_team === 'DRAW') return;
-                    if ((isTeam1 && m.winner_team === 'TEAM_1') || (!isTeam1 && m.winner_team === 'TEAM_2')) w++; else l++;
+                    if (m.winner_team === 'DRAW') {
+                        d++;
+                    } else if ((isTeam1 && m.winner_team === 'TEAM_1') || (!isTeam1 && m.winner_team === 'TEAM_2')) {
+                        w++;
+                    } else {
+                        l++;
+                    }
                 });
-                setStats({ wins: w, losses: l, total: w + l, winRate: (w + l) > 0 ? Math.round((w / (w + l)) * 100) : 0 });
+                setStats({ wins: w, losses: l, draws: d, total: w + l + d, winRate: (w + l + d) > 0 ? Math.round((w / (w + l + d)) * 100) : 0 });
             }
 
             const { data: votes } = await supabase.from('mvp_votes').select('tag').eq('target_id', playerId);
             if (votes) {
                 const counts: { [key: string]: number } = {};
-                votes.forEach((v: any) => { counts[v.tag] = (counts[v.tag] || 0) + 1; });
+                votes.forEach((v) => { counts[v.tag] = (counts[v.tag] || 0) + 1; });
                 setMvpTags(Object.entries(counts).map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count));
             }
 
-            const { data: history } = await supabase.from('elo_history').select('*').eq('player_id', playerId).order('recorded_at', { ascending: true });
+            const { data: history } = await supabase.from('elo_history').select('*').eq('player_id', playerId).order('created_at', { ascending: true });
             if (history) setEloHistory(history);
 
             setLoading(false);
@@ -80,15 +87,6 @@ export default function PlayerProfileModal({ playerId, onClose }: Props) {
     }, [playerId]);
 
     if (!playerId) return null;
-
-    // 🔥 GENDER FILTER HELPER
-    const getDisplayScore = (score: number, type: 'MEN' | 'WOMEN') => {
-        if (!profile?.gender) return score; // Gender not set, show all
-        const g = (profile.gender || '').toLowerCase();
-        if (g === 'male' && type === 'WOMEN') return '---';
-        if (g === 'female' && type === 'MEN') return '---';
-        return score;
-    };
 
     return (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fadeIn">
@@ -107,9 +105,11 @@ export default function PlayerProfileModal({ playerId, onClose }: Props) {
                         )}
                     </div>
 
-                    {loading ? <p className="text-slate-400">Loading Profile...</p> : (
+                    {loading ? <p className="text-slate-400">Loading Profile...</p> : !profile ? (
+                        <p className="text-rose-400 text-center">프로필을 불러올 수 없습니다.</p>
+                    ) : (
                         <>
-                            <h2 className="text-2xl font-black text-white">{profile.name}</h2>
+                            <h2 className="text-2xl font-black text-white">{profile.name || 'Unknown'}</h2>
                             <p className="text-sm text-slate-400 font-bold mb-6 flex items-center gap-2">
                                 {profile.is_guest ? 'GUEST PLAYER' : 'OFFICIAL MEMBER'}
                                 {profile.gender && <span className={`text-[10px] px-1.5 rounded ${(profile.gender).toLowerCase() === 'male' ? 'bg-blue-500/20 text-blue-400' : 'bg-rose-500/20 text-rose-400'}`}>{profile.gender}</span>}
@@ -123,21 +123,21 @@ export default function PlayerProfileModal({ playerId, onClose }: Props) {
                             <div className="w-full grid grid-cols-3 gap-2 mb-6">
                                 <div className="bg-slate-900/50 p-2 rounded-lg text-center border border-slate-700"><p className="text-[10px] text-slate-500">Matches</p><p className="font-bold text-white">{stats.total}</p></div>
                                 <div className="bg-slate-900/50 p-2 rounded-lg text-center border border-slate-700"><p className="text-[10px] text-slate-500">Win Rate</p><p className={`font-bold ${stats.winRate >= 50 ? 'text-lime-400' : 'text-rose-400'}`}>{stats.winRate}%</p></div>
-                                <div className="bg-slate-900/50 p-2 rounded-lg text-center border border-slate-700"><p className="text-[10px] text-slate-500">W / L</p><p className="font-bold text-white"><span className="text-lime-400">{stats.wins}</span>/<span className="text-rose-400">{stats.losses}</span></p></div>
+                                <div className="bg-slate-900/50 p-2 rounded-lg text-center border border-slate-700"><p className="text-[10px] text-slate-500">W / L / D</p><p className="font-bold text-white"><span className="text-lime-400">{stats.wins}</span>/<span className="text-rose-400">{stats.losses}</span>/<span className="text-slate-400">{stats.draws}</span></p></div>
                             </div>
 
-                            {/* ELO Current (Filtered by Gender) */}
+                            {/* ELO Current (Filtered by Gender) - NULL SAFE */}
                             <div className="w-full bg-slate-700/30 rounded-xl p-3 mb-6 border border-slate-600 grid grid-cols-2 gap-2">
                                 <div className={`flex justify-between px-2 py-1 bg-slate-800 rounded ${(profile.gender || '').toLowerCase() === 'female' ? 'opacity-30' : ''}`}>
                                     <span className="text-[10px] text-blue-300">Men</span>
-                                    <span className="font-mono text-sm font-bold">{getDisplayScore(profile.elo_men_doubles, 'MEN')}</span>
+                                    <span className="font-mono text-sm font-bold">{profile.elo_men_doubles ?? '-'}</span>
                                 </div>
                                 <div className={`flex justify-between px-2 py-1 bg-slate-800 rounded ${(profile.gender || '').toLowerCase() === 'male' ? 'opacity-30' : ''}`}>
                                     <span className="text-[10px] text-rose-300">Women</span>
-                                    <span className="font-mono text-sm font-bold">{getDisplayScore(profile.elo_women_doubles, 'WOMEN')}</span>
+                                    <span className="font-mono text-sm font-bold">{profile.elo_women_doubles ?? '-'}</span>
                                 </div>
-                                <div className="flex justify-between px-2 py-1 bg-slate-800 rounded"><span className="text-[10px] text-purple-300">Mixed</span><span className="font-mono text-sm font-bold">{profile.elo_mixed_doubles}</span></div>
-                                <div className="flex justify-between px-2 py-1 bg-slate-800 rounded"><span className="text-[10px] text-emerald-300">Singles</span><span className="font-mono text-sm font-bold">{profile.elo_singles}</span></div>
+                                <div className="flex justify-between px-2 py-1 bg-slate-800 rounded"><span className="text-[10px] text-purple-300">Mixed</span><span className="font-mono text-sm font-bold">{profile.elo_mixed_doubles ?? '-'}</span></div>
+                                <div className="flex justify-between px-2 py-1 bg-slate-800 rounded"><span className="text-[10px] text-emerald-300">Singles</span><span className="font-mono text-sm font-bold">{profile.elo_singles ?? '-'}</span></div>
                             </div>
 
                             <div className="w-full">

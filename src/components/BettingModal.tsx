@@ -37,26 +37,35 @@ export default function BettingModal({ isOpen, onClose, myId }: Props) {
     }, [isOpen, activeTab]);
 
     const fetchMyPoint = async () => {
-        const { data } = await supabase.from('profiles').select('rally_point').eq('id', myId).single();
+        const { data } = await supabase.from('profiles').select('rally_point').eq('id', myId).maybeSingle();
         if (data) setMyPoint(data.rally_point || 0);
     };
 
     const fetchDraftMatches = async () => {
         setLoading(true);
-        // ✅ [Fix] DRAFT, PENDING, draft, pending 등 다양한 상태를 모두 배팅 가능 대상으로 포함
+        // ✅ [Fix] Include PLAYING for 5-minute betting window
         const { data: matchesData } = await supabase
             .from('matches')
-            .select('*')
-            .in('status', ['draft', 'DRAFT', 'pending', 'PENDING'])
+            .select('*, betting_closes_at')
+            .in('status', ['draft', 'DRAFT', 'pending', 'PENDING', 'PLAYING', 'playing'])
             .order('created_at', { ascending: false });
 
         if (matchesData && matchesData.length > 0) {
+            // Filter out matches where betting window closed
+            const now = new Date();
+            const bettableMatches = matchesData.filter((m: any) => {
+                // If no betting_closes_at set, allow betting (pre-start)
+                if (!m.betting_closes_at) return true;
+                // If set, check if still within window
+                return new Date(m.betting_closes_at) > now;
+            });
+
             // Need names
             const pIds = new Set<string>();
-            matchesData.forEach((m: any) => { if (m.player_1) pIds.add(m.player_1); if (m.player_2) pIds.add(m.player_2); if (m.player_3) pIds.add(m.player_3); if (m.player_4) pIds.add(m.player_4); });
-            const { data: pNames } = await supabase.from('profiles').select('id, name, elo_mixed_doubles, ntrp').in('id', Array.from(pIds)); // Using Mixed ELO as base
+            bettableMatches.forEach((m: any) => { if (m.player_1) pIds.add(m.player_1); if (m.player_2) pIds.add(m.player_2); if (m.player_3) pIds.add(m.player_3); if (m.player_4) pIds.add(m.player_4); });
+            const { data: pNames } = await supabase.from('profiles').select('id, name, elo_mixed_doubles, ntrp').in('id', Array.from(pIds));
 
-            const enriched = matchesData.map((m: any) => {
+            const enriched = bettableMatches.map((m: any) => {
                 const getP = (id: string) => pNames?.find((p: any) => p.id === id);
                 const p1 = getP(m.player_1), p2 = getP(m.player_2), p3 = getP(m.player_3), p4 = getP(m.player_4);
 
