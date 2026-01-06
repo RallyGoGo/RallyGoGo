@@ -1,13 +1,26 @@
 import { useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { confirmMatchResult } from '../services/matchVerification';
-import { Database } from '../types/supabase';
 
-type EnrichedMatch = any; // Using looser type for compatibility with CourtBoard's usage
+// Define the shape we expect from CourtBoard
+interface EnrichedMatch {
+    id: string;
+    winner_team: string | null;
+    player_1: string | null;
+    player_2: string | null;
+    player_3: string | null;
+    player_4: string | null;
+    p1_name: string;
+    p2_name: string;
+    p3_name: string;
+    p4_name: string;
+    score_team1: number | null;
+    score_team2: number | null;
+}
 
 interface Props {
     match: EnrichedMatch;
-    user: any;
+    user: { id: string };
     onClose: () => void;
     onSuccess: () => void;
 }
@@ -32,7 +45,10 @@ export default function MatchReviewModal({ match, user, onClose, onSuccess }: Pr
         : [{ id: match.player_3, name: match.p3_name }, { id: match.player_4, name: match.p4_name }];
 
     // Filter out NULLs (for singles) and SELF (cannot vote for self)
-    const candidates = winners.filter(p => p.id && p.id !== user.id);
+    // Explicit type for candidates to satisfy TS
+    const candidates: { id: string; name: string }[] = winners.filter((p): p is { id: string; name: string } =>
+        !!p.id && p.id !== user.id
+    );
 
     const handleSubmit = async () => {
         if (!selectedMvp || !selectedTag) return alert("Please select an MVP and a Reason!");
@@ -58,7 +74,7 @@ export default function MatchReviewModal({ match, user, onClose, onSuccess }: Pr
 
         } catch (e: any) {
             console.error(e);
-            if (e.message.includes("Match already finished")) {
+            if (e.message?.includes("Match already finished")) {
                 alert("⚠️ Match was already confirmed!");
                 onSuccess();
                 onClose();

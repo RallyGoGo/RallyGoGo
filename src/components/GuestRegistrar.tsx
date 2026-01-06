@@ -110,9 +110,10 @@ export default function GuestRegistrar({ onClose, onSuccess }: Props) {
             onSuccess();
             onClose();
 
-        } catch (e: any) {
-            console.error(e);
-            alert("등록 실패: " + (e.message || "알 수 없는 오류"));
+        } catch (e: unknown) {
+            const err = e as Error;
+            console.error(err);
+            alert("등록 실패: " + (err.message || "알 수 없는 오류"));
         } finally {
             setLoading(false);
         }

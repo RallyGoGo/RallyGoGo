@@ -97,6 +97,24 @@ export interface Database {
                     payload: Json
                     created_at: string
                 }
+                Insert: {
+                    id?: string
+                    client_request_id: string
+                    match_id: string
+                    event_type: string
+                    version?: number
+                    payload: Json
+                    created_at?: string
+                }
+                Update: {
+                    id?: string
+                    client_request_id?: string
+                    match_id?: string
+                    event_type?: string
+                    version?: number
+                    payload?: Json
+                    created_at?: string
+                }
             }
             mvp_votes: {
                 Row: {
@@ -113,6 +131,14 @@ export interface Database {
                     voter_id: string
                     target_id: string
                     tag: string
+                    created_at?: string
+                }
+                Update: {
+                    id?: string
+                    match_id?: string
+                    voter_id?: string
+                    target_id?: string
+                    tag?: string
                     created_at?: string
                 }
             }

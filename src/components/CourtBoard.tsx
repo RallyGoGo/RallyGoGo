@@ -72,15 +72,18 @@ export default function CourtBoard({ user }: { user: any }) {
 
     // --- DATA FETCHING (SAFE 406 PREVENTION) ---
     const fetchMatches = async () => {
-        const { data: matchData } = await supabase
+        // Explicitly cast or allow inference if supabase client is typed (which we will verify next)
+        const { data } = await supabase
             .from('matches')
             .select('*')
             .neq('status', 'FINISHED');
 
+        const matchData = data as EnrichedMatch[] | null;
+
         if (!matchData) return;
 
         const allPlayerIds = new Set<string>();
-        matchData.forEach((m: any) => {
+        matchData.forEach((m) => {
             if (m.player_1) allPlayerIds.add(m.player_1);
             if (m.player_2) allPlayerIds.add(m.player_2);
             if (m.player_3) allPlayerIds.add(m.player_3);
@@ -93,19 +96,19 @@ export default function CourtBoard({ user }: { user: any }) {
                 .select('*')
                 .in('id', Array.from(allPlayerIds));
 
-            const profileMap = new Map((profiles || []).map((p: any) => [p.id, p.name]));
+            const profileMap = new Map((profiles || []).map((p) => [p.id, p.name]));
 
-            const enriched = matchData.map((m: any) => ({
+            const enriched = matchData.map((m) => ({
                 ...m,
-                p1_name: profileMap.get(m.player_1) || 'Unknown',
-                p2_name: profileMap.get(m.player_2) || 'Unknown',
-                p3_name: profileMap.get(m.player_3) || 'Unknown',
-                p4_name: profileMap.get(m.player_4) || 'Unknown',
+                p1_name: (m.player_1 ? profileMap.get(m.player_1) : '') || 'Unknown',
+                p2_name: (m.player_2 ? profileMap.get(m.player_2) : '') || 'Unknown',
+                p3_name: (m.player_3 ? profileMap.get(m.player_3) : '') || 'Unknown',
+                p4_name: (m.player_4 ? profileMap.get(m.player_4) : '') || 'Unknown',
             })) as EnrichedMatch[];
             setActiveMatches(enriched);
         } else {
             // Need to cast the initial data if no players found
-            const enriched = matchData.map((m: any) => ({
+            const enriched = matchData.map((m) => ({
                 ...m, p1_name: '', p2_name: '', p3_name: '', p4_name: ''
             })) as EnrichedMatch[];
             setActiveMatches(enriched);
@@ -113,14 +116,16 @@ export default function CourtBoard({ user }: { user: any }) {
     };
 
     const getSmartSortedQueue = async () => {
-        const { data: queueData } = await supabase
+        const { data } = await supabase
             .from('queue')
             .select(`*, profiles (*)`)
             .eq('is_active', true);
 
+        const queueData = data as any[]; // Complex join type, casting to any[] for mapping convenience
+
         if (!queueData) return [];
 
-        const scored = queueData.map((item: any) => ({
+        const scored = queueData.map((item) => ({
             ...item,
             priority_score: item.priority_score,
             finalScore: calculatePriorityScore(item)

@@ -59,6 +59,10 @@ export const confirmMatchResult = async (matchId: string, confirmerId: string, i
 
     if (pError || !profiles) throw new Error('Failed to load profiles');
     const getP = (id: string) => (profiles as Profile[]).find(p => p.id === id);
+    console.log(`🔍 Profiles Loaded: ${profiles?.length || 0} / ${allPlayerIds.length} requested.`);
+    if (profiles?.length !== allPlayerIds.length) {
+        console.warn("⚠️ Warning: Some profiles could not be loaded. Check RLS policies.");
+    }
 
     // D. CALCULATE LOGIC
     // ELO
