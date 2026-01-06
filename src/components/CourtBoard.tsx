@@ -532,6 +532,12 @@ export default function CourtBoard({ user }: { user: any }) {
                     onSuccess={() => { fetchMatches(); setMatchReviewTarget(null); }}
                 />
             )}
+
+            {/* 🚑 DEBUG: Visual Version Tag */}
+            <div className="fixed bottom-2 right-2 bg-red-600 text-white text-xs px-2 py-1 rounded-full z-[9999] font-bold shadow-lg animate-pulse">
+                Ver 3.7 (RLS FIX)
+            </div>
         </div>
     );
 }
+```
