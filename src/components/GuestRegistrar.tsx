@@ -22,40 +22,56 @@ export default function GuestRegistrar({ onClose, onSuccess }: Props) {
             const realScore = parseFloat(ntrp);
             const boostedScore = realScore + 0.25;
 
-            // 2. UUID 생성 (브라우저 내장 crypto 우선 사용, 실패 시 폴백)
-            const generateGuestId = () => {
-                if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-                    return crypto.randomUUID();
-                }
-                // Fallback for older browsers or non-secure contexts
-                return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-                    var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
-                    return v.toString(16);
+            // [CRITICAL FIX] 중복 방지 로직: 이름으로 기존 게스트 검색
+            const { data: existingGuest, error: searchError } = await supabase
+                .from('profiles')
+                .select('id, name')
+                .eq('name', `${name.trim()} (G)`)
+                .eq('is_guest', true)
+                .maybeSingle();
+
+            if (searchError && searchError.code !== 'PGRST116') throw searchError;
+
+            let guestId: string;
+
+            if (existingGuest) {
+                // A. 기존 게스트 재사용
+                console.log(`♻️ Found existing guest: ${existingGuest.name} (${existingGuest.id})`);
+                guestId = existingGuest.id;
+            } else {
+                // B. 신규 게스트 생성
+                // 2. UUID 생성
+                const generateGuestId = () => {
+                    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+                        return crypto.randomUUID();
+                    }
+                    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+                        var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+                        return v.toString(16);
+                    });
+                };
+                guestId = generateGuestId();
+
+                // 3. 프로필 생성 (Profiles Insert)
+                const initialElo = Math.round(boostedScore * 400);
+
+                const { error: profileError } = await supabase.from('profiles').insert({
+                    id: guestId,
+                    email: `guest_${guestId.slice(0, 8)}@temp.com`,
+                    name: `${name.trim()} (G)`,
+                    ntrp: boostedScore,
+                    gender: gender,
+                    is_guest: true,
+                    role: 'member', // Default role
+                    elo_men_doubles: initialElo,
+                    elo_women_doubles: initialElo,
+                    elo_mixed_doubles: initialElo,
+                    elo_singles: initialElo,
+                    games_played_today: 0
                 });
-            };
-            const guestId = generateGuestId();
 
-            // 3. 프로필 생성 (Profiles Insert)
-            // 게스트는 Auth 유저가 아니므로 임의의 ID와 Email을 부여합니다.
-            // ★ [Fix] Calculate initial ELO from NTRP (NTRP * 400)
-            const initialElo = Math.round(boostedScore * 400);
-
-            const { error: profileError } = await supabase.from('profiles').insert({
-                id: guestId,
-                email: `guest_${guestId.slice(0, 8)}@temp.com`,
-                name: `${name.trim()} (G)`,
-                ntrp: boostedScore,
-                gender: gender,
-                is_guest: true,
-                role: 'member',
-                elo_men_doubles: initialElo,
-                elo_women_doubles: initialElo,
-                elo_mixed_doubles: initialElo,
-                elo_singles: initialElo,
-                games_played_today: 0
-            });
-
-            if (profileError) throw profileError;
+                if (profileError) throw profileError;
+            }
 
             // 4. 대기열 즉시 등록
             const { error: queueError } = await supabase.from('queue').insert({

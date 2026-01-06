@@ -85,10 +85,15 @@ export const confirmMatchResult = async (matchId: string, confirmerId: string, i
 
         const nextGameCount = (p.games_played_today || 0) + 1;
         // Priority Algo: 10000 - (Games * 1000) + (NTRP * 10) + (Guest Bonus)
-        const priority = 10000 - (nextGameCount * 1000) + ((p.ntrp || 3.0) * 10) + (p.is_guest ? 100 : 0);
+        const baseNtrp = p.ntrp || 3.0;
+        const guestBonus = p.is_guest ? 100 : 0;
 
-        return { player_id: id, priority };
-    }).filter(Boolean);
+        // Ensure priority is calculated as a valid, finite number.
+        let priority = 10000 - (nextGameCount * 1000) + (baseNtrp * 10) + guestBonus;
+        if (!Number.isFinite(priority)) priority = 5000; // Fallback if calculation fails
+
+        return { player_id: id, priority: Math.floor(priority) };
+    }).filter((item): item is { player_id: string; priority: number } => item !== null);
 
     // E. EXECUTE REMOTE
     const requestId = uuidv4();
