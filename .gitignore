@@ -22,3 +22,25 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Agent and AI files
+.agent/
+.gemini/
+.geminiignore
+AGENT.md
+
+# Archives and temp
+*.zip
+archive_extracted/
+*_bak/
+*_legacy/
+*_snapshot/
+*.txt
+
+# Supabase local
+supabase/.gitignore
+supabase/config.toml
+supabase/*.md
+supabase/remote_*.sql
+schema.sql
+supabase_check.sh

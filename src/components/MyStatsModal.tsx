@@ -1,12 +1,24 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import type { User } from '@supabase/supabase-js';
+import { Database } from '../types/database.types';
+
+type Profile = Database['public']['Tables']['profiles']['Row'];
 
 type Props = {
     user: User;
     onClose: () => void;
     onUpdate: () => void;
 };
+
+// 🌟 Expanded Emoji List
+// ... (emoji list skipped for brevity, keeping existing code structure implies we don't need to replace it if using correct lines, but to be safe I will just replace the top imports)
+// Wait, I cannot skip lines inside replace_file_content unless I use multiple chunks or careful range.
+// Let's use the exact range for imports.
+
+// ...
+// Actually, I'll just replace the top imports and the state declaration part separately or use multi_replace.
+// multi_replace is better here.
 
 // 🌟 Expanded Emoji List
 const EMOJI_LIST = [
@@ -76,28 +88,23 @@ export default function MyStatsModal({ user, onClose, onUpdate }: Props) {
     const [uploading, setUploading] = useState(false);
 
     // Stats
-    const [myProfile, setMyProfile] = useState<any>(null);
+    const [myProfile, setMyProfile] = useState<Profile | null>(null);
     const [bestPartner, setBestPartner] = useState<{ name: string, wins: number } | null>(null);
-    const [worstRival, setWorstRival] = useState<{ name: string, losses: number } | null>(null);
     const [totalStats, setTotalStats] = useState({ wins: 0, losses: 0, draws: 0, winRate: 0 });
 
     // [New] Graph & Badges
     const [eloHistory, setEloHistory] = useState<number[]>([]);
     const [mvpBadges, setMvpBadges] = useState<{ tag: string, count: number }[]>([]);
 
-    useEffect(() => {
-        fetchMyData();
-    }, [user]);
-
-    const fetchMyData = async () => {
+    const fetchMyData = useCallback(async () => {
         setLoading(true);
         // 1. Load Profile (including stats columns)
-        const { data: profile } = await supabase.from('profiles').select('name, emoji, avatar_url, gender, elo_men_doubles, elo_women_doubles, elo_mixed_doubles, elo_singles, total_wins, total_losses, total_draws, winning_streak').eq('id', user.id).maybeSingle();
+        const { data: profile } = await supabase.from('profiles').select('name, emoji, avatar_url, gender, elo_mens_doubles, elo_womens_doubles, elo_mixed_doubles, elo_singles, total_wins, total_losses, total_draws, winning_streak, role').eq('id', user.id).maybeSingle();
         if (profile) {
-            setName(profile.name);
+            setName(profile.name || '');
             setSelectedEmoji(profile.emoji || '🎾');
             setAvatarUrl(profile.avatar_url);
-            setMyProfile(profile);
+            setMyProfile(profile as Profile);
         }
 
         // 2. Analyze Matches
@@ -107,21 +114,20 @@ export default function MyStatsModal({ user, onClose, onUpdate }: Props) {
 
         if (matches) {
             const partnerStats: { [key: string]: number } = {};
-            const rivalStats: { [key: string]: number } = {};
             let w = 0, l = 0;
 
-            matches.forEach((m: any) => {
-                let myTeam = 0; let partnerId = ''; let enemies: string[] = [];
-                if (m.player_1 === user.id) { myTeam = 1; partnerId = m.player_2; enemies = [m.player_3, m.player_4]; }
-                else if (m.player_2 === user.id) { myTeam = 1; partnerId = m.player_1; enemies = [m.player_3, m.player_4]; }
-                else if (m.player_3 === user.id) { myTeam = 2; partnerId = m.player_4; enemies = [m.player_1, m.player_2]; }
-                else if (m.player_4 === user.id) { myTeam = 2; partnerId = m.player_3; enemies = [m.player_1, m.player_2]; }
+            matches.forEach((m) => {
+                let myTeam = 0; let partnerId = '';
+                if (m.player_1 === user.id) { myTeam = 1; partnerId = m.player_2 || ''; }
+                else if (m.player_2 === user.id) { myTeam = 1; partnerId = m.player_1 || ''; }
+                else if (m.player_3 === user.id) { myTeam = 2; partnerId = m.player_4 || ''; }
+                else if (m.player_4 === user.id) { myTeam = 2; partnerId = m.player_3 || ''; }
 
                 if (m.winner_team === 'DRAW') return;
                 const iWon = (myTeam === 1 && m.winner_team === 'TEAM_1') || (myTeam === 2 && m.winner_team === 'TEAM_2');
 
                 if (iWon) { w++; if (partnerId) partnerStats[partnerId] = (partnerStats[partnerId] || 0) + 1; }
-                else { l++; enemies.forEach(e => { if (e) rivalStats[e] = (rivalStats[e] || 0) + 1; }); }
+                else { l++; }
             });
 
             // [Fix] Prefer DB-stored stats if available, fallback to calculated
@@ -131,22 +137,19 @@ export default function MyStatsModal({ user, onClose, onUpdate }: Props) {
             const totalGames = finalWins + finalLosses + finalDraws;
             setTotalStats({ wins: finalWins, losses: finalLosses, draws: finalDraws, winRate: totalGames > 0 ? Math.round((finalWins / totalGames) * 100) : 0 });
 
-            let bestPid = Object.keys(partnerStats).reduce((a, b) => partnerStats[a] > partnerStats[b] ? a : b, '');
-            if (bestPid) { const { data } = await supabase.from('profiles').select('name').eq('id', bestPid).maybeSingle(); if (data) setBestPartner({ name: data.name, wins: partnerStats[bestPid] }); }
-
-            let worstPid = Object.keys(rivalStats).reduce((a, b) => rivalStats[a] > rivalStats[b] ? a : b, '');
-            if (worstPid) { const { data } = await supabase.from('profiles').select('name').eq('id', worstPid).maybeSingle(); if (data) setWorstRival({ name: data.name, losses: rivalStats[worstPid] }); }
+            const bestPid = Object.keys(partnerStats).reduce((a, b) => partnerStats[a] > partnerStats[b] ? a : b, '');
+            if (bestPid) { const { data } = await supabase.from('profiles').select('name').eq('id', bestPid).maybeSingle(); if (data) setBestPartner({ name: data.name || 'Unknown', wins: partnerStats[bestPid] }); }
         }
 
         // 3. [New] Load ELO History (Graph)
         const { data: history } = await supabase.from('elo_history')
-            .select('elo_score')
+            .select('new_rating')
             .eq('player_id', user.id)
             .order('created_at', { ascending: true }) // Oldest first
             .limit(20); // Last 20 changes
 
         if (history) {
-            setEloHistory(history.map((h: any) => h.elo_score));
+            setEloHistory(history.map((h) => h.new_rating));
         }
 
         // 4. [New] Load MVP Badges
@@ -156,7 +159,7 @@ export default function MyStatsModal({ user, onClose, onUpdate }: Props) {
 
         if (votes) {
             const badgeCounts: { [key: string]: number } = {};
-            votes.forEach((v: any) => { badgeCounts[v.tag] = (badgeCounts[v.tag] || 0) + 1; });
+            votes.forEach((v) => { if (v.tag) badgeCounts[v.tag] = (badgeCounts[v.tag] || 0) + 1; });
             const sortedBadges = Object.entries(badgeCounts)
                 .map(([tag, count]) => ({ tag, count }))
                 .sort((a, b) => b.count - a.count);
@@ -164,7 +167,11 @@ export default function MyStatsModal({ user, onClose, onUpdate }: Props) {
         }
 
         setLoading(false);
-    };
+    }, [user.id]);
+
+    useEffect(() => {
+        fetchMyData();
+    }, [fetchMyData]);
 
     // 📸 Image Compression & Upload Logic (Same as before)
     const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -189,7 +196,10 @@ export default function MyStatsModal({ user, onClose, onUpdate }: Props) {
             if (uploadError) throw uploadError;
             const { data: { publicUrl } } = supabase.storage.from('avatars').getPublicUrl(fileName);
             setAvatarUrl(publicUrl);
-        } catch (error: any) { alert('Upload Error: ' + error.message); } finally { setUploading(false); }
+        } catch (error: unknown) {
+            const msg = error instanceof Error ? error.message : 'Upload failed';
+            alert('Upload Error: ' + msg);
+        } finally { setUploading(false); }
     };
 
     const handleSave = async () => {
@@ -225,10 +235,10 @@ export default function MyStatsModal({ user, onClose, onUpdate }: Props) {
 
                                 {/* ELO Grid */}
                                 <div className="w-full bg-slate-700/30 rounded-xl p-3 border border-slate-600 grid grid-cols-4 gap-2 text-center text-xs">
-                                    <div className="bg-slate-800 rounded p-1"><p className="text-slate-400">Men</p><p className="font-bold text-white">{myProfile.elo_men_doubles || '-'}</p></div>
-                                    <div className="bg-slate-800 rounded p-1"><p className="text-slate-400">Women</p><p className="font-bold text-white">{myProfile.elo_women_doubles || '-'}</p></div>
-                                    <div className="bg-slate-800 rounded p-1"><p className="text-slate-400">Mixed</p><p className="font-bold text-white">{myProfile.elo_mixed_doubles || '-'}</p></div>
-                                    <div className="bg-slate-800 rounded p-1"><p className="text-slate-400">Single</p><p className="font-bold text-white">{myProfile.elo_singles || '-'}</p></div>
+                                    <div className="bg-slate-800 rounded p-1"><p className="text-slate-400">Men</p><p className="font-bold text-white">{myProfile?.elo_mens_doubles || '-'}</p></div>
+                                    <div className="bg-slate-800 rounded p-1"><p className="text-slate-400">Women</p><p className="font-bold text-white">{myProfile?.elo_womens_doubles || '-'}</p></div>
+                                    <div className="bg-slate-800 rounded p-1"><p className="text-slate-400">Mixed</p><p className="font-bold text-white">{myProfile?.elo_mixed_doubles || '-'}</p></div>
+                                    <div className="bg-slate-800 rounded p-1"><p className="text-slate-400">Single</p><p className="font-bold text-white">{myProfile?.elo_singles || '-'}</p></div>
                                 </div>
                             </div>
 

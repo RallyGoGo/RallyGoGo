@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import { supabase } from '../lib/supabase';
-import { confirmMatchResult } from '../services/matchVerification';
+import { supabase, isRpcSuccess } from '../lib/supabase';
 
 // Define the shape we expect from CourtBoard
 interface EnrichedMatch {
@@ -65,21 +64,37 @@ export default function MatchReviewModal({ match, user, onClose, onSuccess }: Pr
 
             if (voteError && voteError.code !== '23505') throw voteError; // Ignore unique constraint violation (already voted)
 
-            // 2. Confirm Match
-            await confirmMatchResult(match.id, user.id);
+            // 2. Confirm Match via RPC
+            const { data, error } = await supabase.rpc('finish_match_v2', {
+                p_match_id: match.id,
+                p_team1_score: match.score_team1 || 0,
+                p_team2_score: match.score_team2 || 0,
+                p_confirmation_type: 'NORMAL_CONFIRM'
+            });
+
+            if (error) throw error;
+
+            // Check for logical RPC error but ignore ALREADY_FINISHED
+            if (!isRpcSuccess(data)) {
+                const rpcErr = (data as { error?: string })?.error;
+                if (rpcErr && rpcErr !== 'ALREADY_FINISHED') {
+                    throw new Error(rpcErr || 'RPC Failed');
+                }
+            }
 
             alert("✅ Match Confirmed & MVP Voted!");
             onSuccess();
             onClose();
 
-        } catch (e: any) {
+        } catch (e: unknown) {
             console.error(e);
-            if (e.message?.includes("Match already finished")) {
+            const msg = e instanceof Error ? e.message : 'Unknown error';
+            if (msg.includes("Match already finished")) {
                 alert("⚠️ Match was already confirmed!");
                 onSuccess();
                 onClose();
             } else {
-                alert("Error: " + e.message);
+                alert("Error: " + msg);
             }
         } finally {
             setLoading(false);

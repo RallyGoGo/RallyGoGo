@@ -1,21 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import type { User } from '@supabase/supabase-js';
 import PlayerProfileModal from './PlayerProfileModal';
+import { Database } from '../types/database.types';
 
-// 프로필 타입 정의
-type Profile = {
-    id: string; name: string | null; ntrp: number; is_guest: boolean; gender: string;
-    elo_men_doubles: number | null; elo_women_doubles: number | null; elo_mixed_doubles: number | null; elo_singles: number | null;
-    avatar_url?: string; emoji?: string;
-};
-
-type MatchRecord = {
-    id: string; end_time: string; score_team1: number; score_team2: number;
-    match_type: string; match_category: string;
-    player_1: string; player_2: string; player_3: string; player_4: string;
+// 프로필 타입 정의 (V3 Schema - Using Database Types)
+type Profile = Database['public']['Tables']['profiles']['Row'];
+type MatchRecord = Database['public']['Tables']['matches']['Row'] & {
     p1_name: string; p2_name: string; p3_name: string; p4_name: string;
-    winner_team: string; my_vote?: string;
+    my_vote?: string;
+    match_category: string;
 };
 
 type RankCategory = 'MEN_D' | 'WOMEN_D' | 'MIXED' | 'SINGLES';
@@ -47,102 +41,138 @@ export default function Ranking({ user }: { user: User }) {
 
     const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
 
+    // 데이터 불러오기 함수 (useCallback으로 메모이제이션)
+    const fetchData = useCallback(async () => {
+        setLoading(true);
+        try {
+            if (activeTab === 'RANKING') {
+                // V3: Column names with 's' (elo_mens_doubles, elo_womens_doubles)
+                let sortField: keyof Profile = 'elo_mens_doubles';
+                if (rankCategory === 'WOMEN_D') sortField = 'elo_womens_doubles';
+                if (rankCategory === 'MIXED') sortField = 'elo_mixed_doubles';
+                if (rankCategory === 'SINGLES') sortField = 'elo_singles';
+
+                // Server-side filtering (Performance optimized)
+                let query = supabase
+                    .from('profiles')
+                    .select('*')
+                    .gt(sortField, 0) // Filter 0 points
+                    .order(sortField, { ascending: false })
+                    .limit(50); // Hard limit for safety
+
+                // Gender filter (Server-side)
+                if (rankCategory === 'MEN_D') query = query.eq('gender', 'MALE');
+                if (rankCategory === 'WOMEN_D') query = query.eq('gender', 'FEMALE');
+
+                // Search filter (Server-side)
+                if (searchPlayer) query = query.ilike('name', `%${searchPlayer}%`);
+
+                const { data: profiles, error } = await query;
+                if (error) throw error;
+                setRankings(profiles as Profile[]);
+            } else {
+                // 경기 기록 가져오기
+                const startOfDay = `${selectedDate}T00:00:00`;
+                const endOfDay = `${selectedDate}T23:59:59`;
+
+                const { data: matches, error: matchError } = await supabase
+                    .from('matches')
+                    .select('*')
+                    .eq('status', 'FINISHED')
+                    .gte('end_time', startOfDay)
+                    .lte('end_time', endOfDay)
+                    .order('end_time', { ascending: false });
+
+                if (matchError) throw matchError;
+
+                if (matches && matches.length > 0) {
+                    const pIds = new Set<string>();
+                    matches.forEach((m) => {
+                        if (m.player_1) pIds.add(m.player_1); if (m.player_2) pIds.add(m.player_2);
+                        if (m.player_3) pIds.add(m.player_3); if (m.player_4) pIds.add(m.player_4);
+                    });
+
+                    // V9.7.2: Parallel fetch & Type Safety
+                    const [{ data: pNames }, { data: myVotes }] = await Promise.all([
+                        supabase.from('profiles').select('id, name').in('id', Array.from(pIds)),
+                        supabase.from('mvp_votes').select('match_id, target_id').eq('voter_id', user.id).in('match_id', matches.map((m) => m.id))
+                    ]);
+
+                    const nameMap = new Map((pNames || []).map((p) => [p.id, p.name]));
+                    const voteMap = new Map((myVotes || []).map((v) => [v.match_id, v.target_id]));
+
+                    const formattedHistory = matches.map((m) => ({
+                        ...m,
+                        p1_name: nameMap.get(m.player_1 || '') || 'Unknown',
+                        p2_name: nameMap.get(m.player_2 || '') || 'Unknown',
+                        p3_name: nameMap.get(m.player_3 || '') || 'Unknown',
+                        p4_name: nameMap.get(m.player_4 || '') || 'Unknown',
+                        my_vote: voteMap.get(m.id),
+                        match_category: m.match_type === 'MENS_DOUBLES' ? '남복' : m.match_type === 'WOMENS_DOUBLES' ? '여복' : m.match_type === 'SINGLES' ? '단식' : '혼복'
+                    }));
+                    setHistory(formattedHistory as MatchRecord[]);
+                } else { setHistory([]); }
+            }
+        } catch (e) { console.error(e); } finally { setLoading(false); }
+    }, [activeTab, rankCategory, searchPlayer, selectedDate, user.id]);
+
     // 데이터 실시간 감지 및 불러오기
     useEffect(() => {
-        setRankings([]);
+        setRankings([]); // Clear on tab switch
         fetchData();
         const sub = supabase.channel('ranking_updates')
             .on('postgres_changes', { event: '*', schema: 'public' }, () => fetchData()) // Listen to all changes (matches, mvp_votes, etc)
             .subscribe();
         return () => { supabase.removeChannel(sub); };
-    }, [rankCategory, selectedDate, activeTab]);
-
-    const fetchData = async () => {
-        setLoading(true);
-        try {
-            if (activeTab === 'RANKING') {
-                // 랭킹 데이터 가져오기
-                let sortField = 'elo_men_doubles';
-                if (rankCategory === 'WOMEN_D') sortField = 'elo_women_doubles';
-                else if (rankCategory === 'MIXED') sortField = 'elo_mixed_doubles';
-                else if (rankCategory === 'SINGLES') sortField = 'elo_singles';
-
-                const { data: profiles, error } = await supabase
-                    .from('profiles')
-                    .select('*')
-                    .order(sortField, { ascending: false })
-                    .limit(50);
-
-                if (error) throw error;
-
-                // 필터링 (점수 0점 제외, 성별 체크, 검색어 체크)
-                const cleanProfiles = (profiles || []).filter((p: any) => {
-                    let rawScore = 0;
-                    if (rankCategory === 'MEN_D') rawScore = p.elo_men_doubles || 0;
-                    else if (rankCategory === 'WOMEN_D') rawScore = p.elo_women_doubles || 0;
-                    else if (rankCategory === 'MIXED') rawScore = p.elo_mixed_doubles || 0;
-                    else rawScore = p.elo_singles || 0;
-
-                    if (rawScore <= 0) return false;
-
-                    const normalizeGender = (g: string) => (g || '').trim().toLowerCase().startsWith('m') ? 'Male' : 'Female';
-                    const profileGender = normalizeGender(p.gender);
-
-                    if (rankCategory === 'MEN_D' && profileGender !== 'Male') return false;
-                    if (rankCategory === 'WOMEN_D' && profileGender !== 'Female') return false;
-
-                    return (p.name || 'Unknown').toLowerCase().includes(searchPlayer.toLowerCase());
-                });
-
-                setRankings(cleanProfiles);
-            } else {
-                // 경기 기록 가져오기
-                const startOfDay = `${selectedDate}T00:00:00`;
-                const endOfDay = `${selectedDate}T23:59:59`;
-                const { data: matches } = await supabase.from('matches').select('*').eq('status', 'FINISHED').gte('end_time', startOfDay).lte('end_time', endOfDay).order('end_time', { ascending: false });
-
-                if (matches && matches.length > 0) {
-                    const pIds = new Set<string>();
-                    matches.forEach((m: any) => {
-                        if (m.player_1) pIds.add(m.player_1); if (m.player_2) pIds.add(m.player_2);
-                        if (m.player_3) pIds.add(m.player_3); if (m.player_4) pIds.add(m.player_4);
-                    });
-                    const { data: pNames } = await supabase.from('profiles').select('id, name').in('id', Array.from(pIds));
-                    const { data: myVotes } = await supabase.from('mvp_votes').select('match_id, target_id').eq('voter_id', user.id).in('match_id', matches.map((m: any) => m.id));
-
-                    const formattedHistory = matches.map((m: any) => ({
-                        ...m,
-                        p1_name: pNames?.find((p: any) => p.id === m.player_1)?.name || 'Unknown',
-                        p2_name: pNames?.find((p: any) => p.id === m.player_2)?.name || 'Unknown',
-                        p3_name: pNames?.find((p: any) => p.id === m.player_3)?.name || 'Unknown',
-                        p4_name: pNames?.find((p: any) => p.id === m.player_4)?.name || 'Unknown',
-                        my_vote: myVotes?.find((v: any) => v.match_id === m.id)?.target_id
-                    }));
-                    setHistory(formattedHistory);
-                } else { setHistory([]); }
-            }
-        } catch (e) { console.error(e); } finally { setLoading(false); }
-    };
+    }, [activeTab, rankCategory, selectedDate, fetchData]);
 
     // 현재 카테고리에 맞는 점수 반환
     const getScore = (p: Profile) => {
-        if (rankCategory === 'MEN_D') return p.elo_men_doubles || 0;
-        if (rankCategory === 'WOMEN_D') return p.elo_women_doubles || 0;
+        if (rankCategory === 'MEN_D') return p.elo_mens_doubles || 0;
+        if (rankCategory === 'WOMEN_D') return p.elo_womens_doubles || 0;
         if (rankCategory === 'SINGLES') return p.elo_singles || 0;
         return p.elo_mixed_doubles || 0;
     };
 
     // MVP 투표 관련 함수들
     const openVoteModal = (match: MatchRecord) => { setVoteTargetMatch(match); setVoteCandidate(null); setVoteTag(""); setIsVoteModalOpen(true); };
-    const submitVote = async () => { if (!voteTargetMatch || !voteCandidate || !voteTag) return alert("Select Player & Tag!"); try { const { error } = await supabase.from('mvp_votes').insert({ match_id: voteTargetMatch.id, voter_id: user.id, target_id: voteCandidate, tag: voteTag }); if (error) throw error; alert("👑 투표 완료!"); setIsVoteModalOpen(false); fetchData(); } catch (e: any) { alert("Error!"); } };
-    const getVoteCandidates = () => { if (!voteTargetMatch) return []; const isTeam1Win = voteTargetMatch.winner_team === 'TEAM_1'; const winners = isTeam1Win ? [{ id: voteTargetMatch.player_1, name: voteTargetMatch.p1_name }, { id: voteTargetMatch.player_2, name: voteTargetMatch.p2_name }] : [{ id: voteTargetMatch.player_3, name: voteTargetMatch.p3_name }, { id: voteTargetMatch.player_4, name: voteTargetMatch.p4_name }]; return winners.filter(p => p.id && p.id !== user.id); };
+
+    // Server-side voting is better, but keeping simple insert for now as specification allows simple interaction
+    const submitVote = async () => {
+        if (!voteTargetMatch || !voteCandidate || !voteTag) return alert("Select Player & Tag!");
+        try {
+            /* V9.7.2: Use RPC if possible, but mvp_votes table is simple insert. Assuming RLS allows insert for auth user. */
+            const { error } = await supabase.from('mvp_votes').insert({
+                match_id: voteTargetMatch.id,
+                voter_id: user.id,
+                target_id: voteCandidate,
+                tag: voteTag
+            });
+            if (error) throw error;
+            alert("👑 투표 완료!");
+            setIsVoteModalOpen(false);
+            fetchData();
+        } catch { alert("Error!"); }
+    };
+
+    const getVoteCandidates = () => {
+        if (!voteTargetMatch) return [];
+        const isTeam1Win = voteTargetMatch.winner_team === 'TEAM_1';
+        const winners = isTeam1Win
+            ? [{ id: voteTargetMatch.player_1, name: voteTargetMatch.p1_name }, { id: voteTargetMatch.player_2, name: voteTargetMatch.p2_name }]
+            : [{ id: voteTargetMatch.player_3, name: voteTargetMatch.p3_name }, { id: voteTargetMatch.player_4, name: voteTargetMatch.p4_name }];
+        return winners.filter(p => p.id && p.id !== user.id);
+    };
 
     // ✨ 데이터 슬라이싱 (1~3등 / 4~10등)
     const top3 = rankings.slice(0, 3);
     const restOfRankings = rankings.slice(3, 10);
 
+    // Podium card style type for type safety
+    type PodiumStyles = { mt: string; scale: string; badge: string; cardBorder: string; cardShadow: string };
+
     // 단상 카드 렌더링 함수
-    const renderPodiumCard = (player: Profile | undefined, rank: number, styles: any) => {
+    const renderPodiumCard = (player: Profile | undefined, rank: number, styles: PodiumStyles) => {
         if (!player) return <div className="flex-1"></div>;
         return (
             <div onClick={() => setSelectedProfileId(player.id)} className={`flex-1 flex flex-col items-center relative transition-all duration-500 cursor-pointer hover:-translate-y-2 ${styles.mt} ${styles.scale}`}>
@@ -174,7 +204,7 @@ export default function Ranking({ user }: { user: User }) {
                         {/* 카테고리 선택 버튼 */}
                         <div className="flex gap-1 mb-4 bg-slate-900/50 p-1 rounded-lg inline-flex self-center">
                             {['MEN_D', 'WOMEN_D', 'MIXED', 'SINGLES'].map(cat => (
-                                <button key={cat} onClick={() => setRankCategory(cat as any)} className={`px-2 py-1 text-[10px] rounded font-bold transition-all ${rankCategory === cat ? 'bg-slate-600 text-white shadow' : 'text-slate-400'}`}>
+                                <button key={cat} onClick={() => setRankCategory(cat as RankCategory)} className={`px-2 py-1 text-[10px] rounded font-bold transition-all ${rankCategory === cat ? 'bg-slate-600 text-white shadow' : 'text-slate-400'}`}>
                                     {cat === 'MEN_D' ? '남복' : cat === 'WOMEN_D' ? '여복' : cat === 'MIXED' ? '혼복' : '단식'}
                                 </button>
                             ))}
@@ -225,7 +255,7 @@ export default function Ranking({ user }: { user: User }) {
                             <div key={match.id} className="bg-slate-900/50 p-4 rounded-xl border border-white/5">
                                 <div className="flex justify-between items-center mb-2">
                                     <span className="text-[10px] px-2 py-0.5 rounded font-bold bg-slate-700 text-slate-300">{match.match_category}</span>
-                                    <span className="text-[10px] text-slate-500">{match.end_time.substring(11, 16)}</span>
+                                    <span className="text-[10px] text-slate-500">{(match.end_time || '').substring(11, 16)}</span>
                                 </div>
                                 <div className="flex justify-between items-center">
                                     <div className={`text-center w-1/3 ${match.winner_team === 'TEAM_1' ? 'text-lime-400' : 'text-slate-500'}`}><p className="text-xl font-black">{match.score_team1}</p><p className="text-xs truncate">{match.p1_name}/{match.p2_name}</p></div>

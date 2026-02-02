@@ -1,19 +1,20 @@
-import { supabase } from '../lib/supabase';
+// matchingSystem.ts - V8.3 Matching Engine
+// Note: This service is used by CourtBoard for match generation
 
 // ------------------------------------------------------------------
 // Type Definitions
 // ------------------------------------------------------------------
 export type PlayerProfile = {
     id: string;
-    name: string;
-    gender: string; // 'Male', 'Female' normalized
-    is_guest: boolean;
-    ntrp: number;
-    elo_men_doubles: number;
-    elo_women_doubles: number;
-    elo_mixed_doubles: number;
-    elo_singles: number;
-    games_played_today: number;
+    name: string | null;  // DB allows null
+    gender: string | null; // 'MALE', 'FEMALE' (V3 ENUM)
+    is_guest: boolean | null;
+    ntrp: number | null;
+    elo_mens_doubles: number | null;   // V3: men → mens
+    elo_womens_doubles: number | null; // V3: women → womens
+    elo_mixed_doubles: number | null;
+    elo_singles: number | null;
+    games_played_today: number | null;
 };
 
 export type QueueItem = {
@@ -21,7 +22,7 @@ export type QueueItem = {
     user_id?: string;
     joined_at: string;
     departure_time: string | null;
-    profiles: PlayerProfile;
+    profiles: PlayerProfile | null;  // Allow null for joined query safety
     finalScore: number;
     waitMinutes: number;
 };
@@ -30,9 +31,9 @@ export type QueueItem = {
 // 1. New Scoring Algorithm (V8.2 - Polished)
 // ------------------------------------------------------------------
 // (점수 계산 로직은 기존과 동일하며 완벽합니다. 그대로 유지합니다.)
-export const calculatePriorityScore = (item: any): number => {
+export const calculatePriorityScore = (item: QueueItem): number => {
     try {
-        const profile = item.profiles || {};
+        const profile = item.profiles;
         const now = new Date();
         const joinedAt = new Date(item.joined_at);
 
@@ -44,7 +45,7 @@ export const calculatePriorityScore = (item: any): number => {
         }
 
         // 2. Number Conversion (Prevent NaN)
-        const gamesPlayed = Number(profile.games_played_today) || 0;
+        const gamesPlayed = Number(profile?.games_played_today) || 0;
 
         // A. Base Logic
         const initialBoost = gamesPlayed === 0 ? 5000 : 0;
@@ -53,11 +54,11 @@ export const calculatePriorityScore = (item: any): number => {
 
         // B. Bonus Logic
         let bonus = 0;
-        if (profile.is_guest) {
+        if (profile?.is_guest) {
             const maxElo = Math.max(
-                Number(profile.elo_men_doubles) || 0,
-                Number(profile.elo_women_doubles) || 0,
-                Number(profile.elo_mixed_doubles) || 0
+                Number(profile?.elo_mens_doubles) || 0,
+                Number(profile?.elo_womens_doubles) || 0,
+                Number(profile?.elo_mixed_doubles) || 0
             );
             if (maxElo >= 2000) bonus += 999999;
             else bonus += 3000;
@@ -87,7 +88,7 @@ export const calculatePriorityScore = (item: any): number => {
 
         const total = initialBoost + waitScore - gamePenalty + bonus;
         return isNaN(total) ? 0 : Math.round(total);
-    } catch (e) {
+    } catch {
         return 0; // Absolute fallback
     }
 };
@@ -108,14 +109,14 @@ export const generateV83Match = (queue: QueueItem[]) => {
     // [Step A] VIP 긴급 매칭 (Guest ELO 2000+)
     // -----------------------------------------------------------
     const vip = scoredQueue.find(p =>
-        p.profiles.is_guest &&
-        Math.max(p.profiles.elo_men_doubles || 0, p.profiles.elo_women_doubles || 0) >= 2000
+        p.profiles?.is_guest &&
+        Math.max(p.profiles?.elo_mens_doubles || 0, p.profiles?.elo_womens_doubles || 0) >= 2000
     );
 
     if (vip) {
         const highEloPlayers = scoredQueue
             .filter(p => (p.player_id || p.user_id) !== (vip.player_id || vip.user_id))
-            .filter(p => Math.max(p.profiles.elo_men_doubles || 0, p.profiles.elo_women_doubles || 0) >= 1800)
+            .filter(p => Math.max(p.profiles?.elo_mens_doubles || 0, p.profiles?.elo_womens_doubles || 0) >= 1800)
             .slice(0, 3);
 
         if (highEloPlayers.length === 3) {
@@ -127,16 +128,16 @@ export const generateV83Match = (queue: QueueItem[]) => {
     // -----------------------------------------------------------
     // [Step B] 후보군 추출 (Smart Pooling)
     // -----------------------------------------------------------
-    let pool = scoredQueue.slice(0, 6);
+    const pool = scoredQueue.slice(0, 6);
 
     // 성비 불균형 시 와일드카드(7~10위) 투입
-    const normalizeGender = (g: string) => g && g.toLowerCase().startsWith('m') ? 'Male' : 'Female';
-    const maleCount = pool.filter(p => normalizeGender(p.profiles.gender) === 'Male').length;
+    const normalizeGender = (g: string | null | undefined) => g && g.toUpperCase() === 'MALE' ? 'MALE' : 'FEMALE';  // V3: MALE/FEMALE
+    const maleCount = pool.filter(p => normalizeGender(p.profiles?.gender) === 'MALE').length;
 
     if (maleCount >= 6 || maleCount === 0) {
         const candidates = scoredQueue.slice(6, 10);
-        const targetGender = maleCount >= 6 ? 'Female' : 'Male';
-        const wildCard = candidates.find(p => normalizeGender(p.profiles.gender) === targetGender);
+        const targetGender = maleCount >= 6 ? 'FEMALE' : 'MALE';  // V3: MALE/FEMALE
+        const wildCard = candidates.find(p => normalizeGender(p.profiles?.gender) === targetGender);
         if (wildCard) {
             pool.pop();
             pool.push(wildCard);
@@ -150,8 +151,8 @@ export const generateV83Match = (queue: QueueItem[]) => {
     let matchType = 'MIXED';
 
     // 1차적으로 성비/점수 고려하여 4명 선택
-    const men = pool.filter(p => normalizeGender(p.profiles.gender) === 'Male');
-    const women = pool.filter(p => normalizeGender(p.profiles.gender) === 'Female');
+    const men = pool.filter(p => normalizeGender(p.profiles?.gender) === 'MALE');
+    const women = pool.filter(p => normalizeGender(p.profiles?.gender) === 'FEMALE');
 
     if (women.length >= 4) {
         selected4 = women.slice(0, 4);
@@ -182,7 +183,7 @@ export const generateV83Match = (queue: QueueItem[]) => {
         const reserves = pool.filter(p => !selected4.includes(p)); // 선택되지 않은 나머지 인원
 
         // Outlier의 성별과 같은 대체자를 찾음 (성비 유지 위해)
-        const replacement = reserves.find(p => normalizeGender(p.profiles.gender) === normalizeGender(outlier.profiles.gender));
+        const replacement = reserves.find(p => normalizeGender(p.profiles?.gender) === normalizeGender(outlier.profiles?.gender));
 
         if (replacement) {
             // Outlier를 빼고 대체자 투입
@@ -227,17 +228,17 @@ export const generateV83Match = (queue: QueueItem[]) => {
 
 // ELO 가져오기 (매칭 타입별)
 const getElo = (p: QueueItem, type: string) => {
-    if (type === 'MEN_D') return p.profiles.elo_men_doubles || 1200;
-    if (type === 'WOMEN_D') return p.profiles.elo_women_doubles || 1200;
-    return p.profiles.elo_mixed_doubles || 1200;
+    if (type === 'MEN_D') return p.profiles?.elo_mens_doubles || 1200;   // V3: men → mens
+    if (type === 'WOMEN_D') return p.profiles?.elo_womens_doubles || 1200; // V3: women → womens
+    return p.profiles?.elo_mixed_doubles || 1200;
 };
 
 // VIP용 최고 ELO 가져오기
 const getMaxElo = (p: QueueItem) => {
     return Math.max(
-        p.profiles.elo_men_doubles || 0,
-        p.profiles.elo_women_doubles || 0,
-        p.profiles.elo_mixed_doubles || 0
+        p.profiles?.elo_mens_doubles || 0,   // V3: men → mens
+        p.profiles?.elo_womens_doubles || 0, // V3: women → womens
+        p.profiles?.elo_mixed_doubles || 0
     ) || 1200;
 };
 

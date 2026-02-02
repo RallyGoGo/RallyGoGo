@@ -77,14 +77,15 @@ export default function Auth() {
                     } else {
                         // ★ [Case B] 신규 회원 생성 (기존 로직)
                         const initialScore = getInitialElo(ntrp);
+                        // V3 Schema: Column names have 's' (mens, womens), Gender is ENUM (MALE/FEMALE)
                         const { error: profileError } = await supabase.from('profiles').insert({
                             id: data.user.id,
                             email: email,
                             name: name,
                             ntrp: parseFloat(ntrp),
-                            gender: gender,
-                            elo_men_doubles: initialScore,
-                            elo_women_doubles: initialScore,
+                            gender: gender === 'Male' ? 'MALE' : 'FEMALE',  // V3 uses ENUM
+                            elo_mens_doubles: initialScore,    // Fixed: men → mens
+                            elo_womens_doubles: initialScore,  // Fixed: women → womens
                             elo_mixed_doubles: initialScore,
                             elo_singles: initialScore,
                             is_guest: false
@@ -102,9 +103,11 @@ export default function Auth() {
                 const { error } = await supabase.auth.signInWithPassword({ email, password });
                 if (error) throw error;
             }
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error("Auth Error:", error);
-            setErrorMsg(error.error_description || error.message || "로그인 실패");
+            type AuthError = { error_description?: string; message?: string };
+            const err = error as AuthError;
+            setErrorMsg(err.error_description || err.message || "로그인 실패");
         } finally {
             setLoading(false);
         }

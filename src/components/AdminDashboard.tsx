@@ -1,27 +1,21 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '../lib/supabase';
+import { supabase, isRpcSuccess } from '../lib/supabase';
+import { Database } from '../types/database.types';
 
-// [Update] role 필드 추가
-type Profile = {
-    id: string;
-    email: string;
-    name: string;
-    gender: string;
-    ntrp: number;
-    is_guest: boolean;
-    role?: string; // 'member', 'coach', 'admin'
-};
+// Type aliases from database.types.ts
+type ProfileRow = Database['public']['Tables']['profiles']['Row'];
+type MatchRow = Database['public']['Tables']['matches']['Row'];
+type NoticeRow = Database['public']['Tables']['notices']['Row'];
 
-type Notice = { id: string; content: string; is_active: boolean; created_at: string; };
-type Match = {
-    id: string; end_time: string; score_team1: number; score_team2: number; winner_team: string;
-    player_1: string; player_2: string; player_3: string; player_4: string;
-    elo_delta: number; match_category: string;
-    status: string; // [Update] status 필드 필수
+// Extended types for UI enrichment
+type Profile = ProfileRow;
+type Notice = NoticeRow;
+type Match = MatchRow & {
     p1_name?: string; p2_name?: string; p3_name?: string; p4_name?: string;
 };
 
 type Props = { onClose: () => void; };
+
 
 export default function AdminBoard({ onClose }: Props) {
     const [activeTab, setActiveTab] = useState<'MEMBERS' | 'NOTICES' | 'MATCHES' | 'EVENTS'>('MEMBERS');
@@ -63,25 +57,29 @@ export default function AdminBoard({ onClose }: Props) {
         setLoading(false);
     };
 
-    // ✅ [핵심 수정] PENDING 상태인 경기도 가져오도록 수정
+    // ✅ V3: match_status_t = DRAFT, PLAYING, SCORING, FINISHED, CANCELLED, DISPUTED (no PENDING)
     const fetchMatches = async () => {
         setLoading(true);
         const { data: matches } = await supabase
             .from('matches')
             .select('*')
-            // 'PENDING', 'FINISHED', 'DISPUTED' 상태 모두 가져옴
-            .in('status', ['FINISHED', 'PENDING', 'DISPUTED'])
+            // V3 uses SCORING for awaiting confirmation (not PENDING)
+            .in('status', ['FINISHED', 'SCORING', 'DISPUTED'])
             .order('end_time', { ascending: false })
             .limit(50);
 
         if (matches) {
+            // Define types for better type safety
+            type MatchRow = { player_1: string | null; player_2: string | null; player_3: string | null; player_4: string | null };
+            type NameRow = { id: string; name: string };
+
             const pIds = new Set<string>();
-            matches.forEach((m: any) => { if (m.player_1) pIds.add(m.player_1); if (m.player_2) pIds.add(m.player_2); if (m.player_3) pIds.add(m.player_3); if (m.player_4) pIds.add(m.player_4); });
+            matches.forEach((m: MatchRow) => { if (m.player_1) pIds.add(m.player_1); if (m.player_2) pIds.add(m.player_2); if (m.player_3) pIds.add(m.player_3); if (m.player_4) pIds.add(m.player_4); });
             const { data: pNames } = await supabase.from('profiles').select('id, name').in('id', Array.from(pIds));
-            const enriched = matches.map((m: any) => ({
+            const enriched = matches.map((m: MatchRow) => ({
                 ...m,
-                p1_name: pNames?.find((p: any) => p.id === m.player_1)?.name || '?', p2_name: pNames?.find((p: any) => p.id === m.player_2)?.name || '?',
-                p3_name: pNames?.find((p: any) => p.id === m.player_3)?.name || '?', p4_name: pNames?.find((p: any) => p.id === m.player_4)?.name || '?',
+                p1_name: pNames?.find((p: NameRow) => p.id === m.player_1)?.name || '?', p2_name: pNames?.find((p: NameRow) => p.id === m.player_2)?.name || '?',
+                p3_name: pNames?.find((p: NameRow) => p.id === m.player_3)?.name || '?', p4_name: pNames?.find((p: NameRow) => p.id === m.player_4)?.name || '?',
             }));
             setMatches(enriched);
         }
@@ -90,42 +88,59 @@ export default function AdminBoard({ onClose }: Props) {
 
     const startEdit = (p: Profile) => {
         setEditingId(p.id);
-        setEditForm({ name: p.name, gender: p.gender || 'Male', ntrp: p.ntrp, role: p.role || 'member' });
+        setEditForm({ name: p.name || '', gender: p.gender || 'MALE', ntrp: p.ntrp || 0, role: p.role || 'player' });
     };
 
     const saveEdit = async () => {
         if (!editingId) return;
-        const { error } = await supabase.from('profiles').update(editForm).eq('id', editingId);
-        if (error) alert(error.message);
-        else { setEditingId(null); fetchProfiles(); }
+        const { data, error } = await supabase.rpc('admin_update_profile', {
+            p_profile_id: editingId,
+            p_name: editForm.name || undefined,
+            p_gender: editForm.gender || undefined,
+            p_ntrp: editForm.ntrp || undefined,
+            p_role: editForm.role || undefined
+        });
+        if (error) { alert(error.message); return; }
+        if (!isRpcSuccess(data)) { alert(`Error: ${(data as { error?: string })?.error || 'Unknown error'}`); return; }
+        setEditingId(null);
+        fetchProfiles();
     };
 
-    const clearQueue = async () => { if (!confirm("⚠️ 대기열을 초기화하시겠습니까? (모든 대기자 삭제)")) return; await supabase.from('queue').delete().neq('user_id', '00000000-0000-0000-0000-000000000000'); alert("Queue Cleared!"); };
+    const clearQueue = async () => {
+        if (!confirm("⚠️ 대기열을 초기화하시겠습니까? (모든 대기자 삭제)")) return;
+        const { data, error } = await supabase.rpc('admin_clear_queue');
+        if (error) { alert(error.message); return; }
+        if (isRpcSuccess(data)) {
+            alert(`Queue Cleared! (${(data as { deleted_count?: number })?.deleted_count || 0} entries deleted)`);
+        } else {
+            alert(`Error: ${(data as { error?: string })?.error || 'Unknown error'}`);
+        }
+    };
 
     const addNotice = async () => { if (!newNotice.trim()) return; await supabase.from('notices').insert({ content: newNotice, is_active: true }); setNewNotice(''); fetchNotices(); };
     const deleteNotice = async (id: string) => { if (!confirm("Delete this notice?")) return; await supabase.from('notices').delete().eq('id', id); fetchNotices(); };
 
-    // ✅ [기능 추가] 관리자 강제 승인 기능
+    // ✅ [Phase 4E] Admin Confirm Match via RPC
     const adminConfirmMatch = async (matchId: string) => {
         if (!confirm("관리자 권한으로 이 결과를 승인하시겠습니까? (ELO 점수가 반영됩니다)")) return;
         setLoading(true);
         try {
-            // 1. 상태를 FINISHED로 변경
-            const { error } = await supabase.from('matches').update({ status: 'FINISHED' }).eq('id', matchId);
+            const { data, error } = await supabase.rpc('admin_confirm_match', { p_match_id: matchId });
             if (error) throw error;
-
-            // (참고: ELO 계산 로직이 DB 트리거에 있다면 자동 실행됨. 없다면 별도 계산 필요하지만, 일단 승인 처리만 수행)
-
+            if (!isRpcSuccess(data)) throw new Error((data as { error?: string })?.error || 'RPC failed');
             alert("✅ 관리자 승인 완료!");
-            fetchMatches(); // 목록 새로고침
-        } catch (e: any) { alert("Error: " + e.message); }
+            fetchMatches();
+        } catch (e) {
+            const errMsg = e instanceof Error ? e.message : String(e);
+            alert("Error: " + errMsg);
+        }
         setLoading(false);
     };
 
+    // ✅ [Phase 4E] Rollback Match via RPC (atomic ELO reversal + audit log)
     const rollbackMatch = async (m: Match) => {
-        // PENDING 상태일 때 '거절' 누르면 롤백이 아니라 그냥 삭제/취소임
-        const isPending = m.status === 'PENDING';
-        const msg = isPending
+        const isScoring = m.status === 'SCORING';
+        const msg = isScoring
             ? "이 경기 결과를 거절하고 무효화하시겠습니까?"
             : `⚠️ WARNING: 이 경기 기록을 삭제하고 점수를 롤백하시겠습니까?`;
 
@@ -133,51 +148,26 @@ export default function AdminBoard({ onClose }: Props) {
 
         setLoading(true);
         try {
-            // 이미 끝난 경기라면 점수 원복 로직 실행
-            if (!isPending) {
-                const delta = m.elo_delta || 0;
-                let eloField = 'elo_mixed_doubles';
-                if (m.match_category === 'MEN_D') eloField = 'elo_men_doubles';
-                else if (m.match_category === 'WOMEN_D') eloField = 'elo_women_doubles';
-                else if (m.match_category === 'SINGLES') eloField = 'elo_singles';
-
-                if (delta !== 0 && m.winner_team !== 'DRAW') {
-                    const winners = m.winner_team === 'TEAM_1' ? [m.player_1, m.player_2] : [m.player_3, m.player_4];
-                    const losers = m.winner_team === 'TEAM_1' ? [m.player_3, m.player_4] : [m.player_1, m.player_2];
-                    const { data: players } = await supabase.from('profiles').select(`id, ${eloField}`).in('id', [...winners, ...losers].filter(Boolean));
-
-                    if (players) {
-                        for (const p of players) {
-                            const isWinner = winners.includes(p.id);
-                            const revertAmount = isWinner ? -delta : delta;
-                            const currentScore = (p as any)[eloField] || 1200;
-                            const newScore = currentScore + revertAmount;
-
-                            await supabase.from('profiles').update({ [eloField]: newScore }).eq('id', p.id);
-                            await supabase.from('elo_history').insert({
-                                player_id: p.id,
-                                match_type: m.match_category,
-                                elo_score: newScore,
-                                delta: revertAmount,
-                                created_at: new Date().toISOString()
-                            });
-                        }
-                    }
-                }
-            }
-
-            // 경기 기록 삭제 (거절/롤백 공통)
-            const { error } = await supabase.from('matches').delete().eq('id', m.id);
+            const reason = isScoring ? 'Admin rejection' : 'Admin rollback';
+            const { data, error } = await supabase.rpc('admin_rollback_match', {
+                p_match_id: m.id,
+                p_reason: reason
+            });
             if (error) throw error;
+            if (!isRpcSuccess(data)) throw new Error((data as { error?: string })?.error || 'RPC failed');
 
-            alert(isPending ? "🚫 승인 거절됨 (기록 삭제)" : "✅ 롤백 완료");
+            const affectedPlayers = (data as { affected_players?: number })?.affected_players || 0;
+            alert(isScoring ? "🚫 승인 거절됨 (기록 삭제)" : `✅ 롤백 완료 (${affectedPlayers} players affected)`);
             fetchMatches();
-        } catch (e: any) { alert("Error: " + e.message); }
+        } catch (e) {
+            const errMsg = e instanceof Error ? e.message : String(e);
+            alert("Error: " + errMsg);
+        }
         setLoading(false);
     };
 
     // ------------------------------------------------------------------
-    // 1. 📅 Season Soft Reset (Compression Logic)
+    // 1. 📅 Season Soft Reset (via RPC - atomic batch operation)
     // ------------------------------------------------------------------
     const softResetSeason = async () => {
         if (!confirm("⚠️ [SEASON RESET] 정말 시즌을 초기화하시겠습니까?\n\n모든 유저의 점수가 1200점 기준으로 압축됩니다.\n(예: 1600 -> 1400, 1000 -> 1100)")) return;
@@ -187,24 +177,17 @@ export default function AdminBoard({ onClose }: Props) {
 
         setLoading(true);
         try {
-            // Fetch all profiles
-            const { data: allProfiles } = await supabase.from('profiles').select('id, elo_men_doubles, elo_women_doubles, elo_mixed_doubles, elo_singles');
-            if (!allProfiles) throw new Error("No profiles found");
+            const { data, error } = await supabase.rpc('admin_season_soft_reset');
+            if (error) throw error;
+            if (!isRpcSuccess(data)) throw new Error((data as { error?: string })?.error || 'RPC failed');
 
-            for (const p of allProfiles) {
-                // Apply Formula: New = 1200 + (Old - 1200) / 2
-                const compress = (old: number) => Math.round(1200 + ((old || 1200) - 1200) / 2);
-
-                await supabase.from('profiles').update({
-                    elo_men_doubles: compress(p.elo_men_doubles),
-                    elo_women_doubles: compress(p.elo_women_doubles),
-                    elo_mixed_doubles: compress(p.elo_mixed_doubles),
-                    elo_singles: compress(p.elo_singles),
-                }).eq('id', p.id);
-            }
-            alert("✅ 시즌 소프트 리셋 완료! 점수가 압축되었습니다.");
+            const affectedProfiles = (data as { affected_profiles?: number })?.affected_profiles || 0;
+            alert(`✅ 시즌 소프트 리셋 완료! (${affectedProfiles} profiles updated)`);
             fetchProfiles();
-        } catch (e: any) { alert("Error: " + e.message); }
+        } catch (e) {
+            const errMsg = e instanceof Error ? e.message : String(e);
+            alert("Error: " + errMsg);
+        }
         setLoading(false);
     };
 
@@ -296,7 +279,7 @@ export default function AdminBoard({ onClose }: Props) {
         // Here we are fetching fresh. Ideally we use 'profiles' map.
 
         for (const m of history) {
-            const partnerInfo = getPartner(m as any, targetId); // simplified
+            const partnerInfo = getPartner(m as Match, targetId); // Match type from state
             if (!partnerInfo || !partnerInfo.id) continue;
 
             // Resolve name from 'profiles' state if possible
@@ -306,7 +289,7 @@ export default function AdminBoard({ onClose }: Props) {
             if (!partnerStats[partnerInfo.id]) partnerStats[partnerInfo.id] = { wins: 0, total: 0, name: pName };
 
             partnerStats[partnerInfo.id].total += 1;
-            if (didWin(m as any, targetId)) partnerStats[partnerInfo.id].wins += 1;
+            if (didWin(m as Match, targetId)) partnerStats[partnerInfo.id].wins += 1;
         }
 
         // Find Best
@@ -474,11 +457,11 @@ export default function AdminBoard({ onClose }: Props) {
                     {activeTab === 'MATCHES' && (
                         <div className="space-y-3">
                             {matches.map(m => (
-                                <div key={m.id} className={`bg-slate-800 p-4 rounded-xl border flex flex-col md:flex-row justify-between items-center gap-4 transition-all ${m.status === 'PENDING' ? 'border-amber-500/50 bg-amber-900/10' : 'border-slate-700'}`}>
+                                <div key={m.id} className={`bg-slate-800 p-4 rounded-xl border flex flex-col md:flex-row justify-between items-center gap-4 transition-all ${m.status === 'SCORING' ? 'border-amber-500/50 bg-amber-900/10' : 'border-slate-700'}`}>
                                     <div className="flex items-center gap-4 w-full md:w-auto justify-between md:justify-start">
 
                                         {/* 상태 뱃지 */}
-                                        {m.status === 'PENDING' && <span className="bg-amber-500 text-slate-900 text-[10px] px-2 py-0.5 rounded font-black animate-pulse whitespace-nowrap">⏳ 승인 대기</span>}
+                                        {m.status === 'SCORING' && <span className="bg-amber-500 text-slate-900 text-[10px] px-2 py-0.5 rounded font-black animate-pulse whitespace-nowrap">⏳ 승인 대기</span>}
                                         {m.status === 'DISPUTED' && <span className="bg-rose-500 text-white text-[10px] px-2 py-0.5 rounded font-black animate-pulse whitespace-nowrap">🚨 분쟁 중</span>}
 
                                         <div className="text-right">
@@ -499,7 +482,7 @@ export default function AdminBoard({ onClose }: Props) {
                                             <p className="text-xs text-slate-600">{new Date(m.end_time).toLocaleDateString()}</p>
                                         </div>
 
-                                        {m.status === 'PENDING' || m.status === 'DISPUTED' ? (
+                                        {m.status === 'SCORING' || m.status === 'DISPUTED' ? (
                                             <>
                                                 <button onClick={() => adminConfirmMatch(m.id)} className="bg-lime-600 hover:bg-lime-500 text-white px-3 py-2 rounded-lg text-xs font-bold shadow-lg border border-lime-400 transition-all whitespace-nowrap">
                                                     ⚡ 강제 승인

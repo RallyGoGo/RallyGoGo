@@ -1,6 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { BettingSystem, Bet } from '../services/bettingSystem';
+import { Database } from '../types/database.types';
+
+type MatchRow = Database['public']['Tables']['matches']['Row'];
 
 type Props = {
     isOpen: boolean;
@@ -9,13 +12,10 @@ type Props = {
 };
 
 // Simplified Match Type for Betting List
-type BettingMatch = {
-    id: string;
-    player_1: string; player_2: string; player_3: string; player_4: string;
-    elo_team1: number; elo_team2: number; // Computed locally or fetched
+type BettingMatch = MatchRow & {
     p1_name?: string; p2_name?: string; p3_name?: string; p4_name?: string;
-    status: string;
-    odds_team1?: number; // Optional if stored in DB
+    elo_team1: number; elo_team2: number;
+    odds_team1?: number;
     odds_team2?: number;
 };
 
@@ -27,33 +27,25 @@ export default function BettingModal({ isOpen, onClose, myId }: Props) {
     const [loading, setLoading] = useState(false);
     const [placing, setPlacing] = useState(false);
 
-    // Fetch essential data when open
-    useEffect(() => {
-        if (isOpen) {
-            fetchMyPoint();
-            if (activeTab === 'LIVE') fetchDraftMatches();
-            else fetchHistory();
-        }
-    }, [isOpen, activeTab]);
-
-    const fetchMyPoint = async () => {
+    // Use useCallback to fix hoisting and dependency issues
+    const fetchMyPoint = useCallback(async () => {
         const { data } = await supabase.from('profiles').select('rally_point').eq('id', myId).maybeSingle();
         if (data) setMyPoint(data.rally_point || 0);
-    };
+    }, [myId]);
 
-    const fetchDraftMatches = async () => {
+    const fetchDraftMatches = useCallback(async () => {
         setLoading(true);
         // ✅ [Fix] Include PLAYING for 5-minute betting window
         const { data: matchesData } = await supabase
             .from('matches')
-            .select('*, betting_closes_at')
-            .in('status', ['draft', 'DRAFT', 'pending', 'PENDING', 'PLAYING', 'playing'])
+            .select('*')
+            .in('status', ['DRAFT', 'PLAYING'])
             .order('created_at', { ascending: false });
 
         if (matchesData && matchesData.length > 0) {
             // Filter out matches where betting window closed
             const now = new Date();
-            const bettableMatches = matchesData.filter((m: any) => {
+            const bettableMatches = matchesData.filter((m) => {
                 // If no betting_closes_at set, allow betting (pre-start)
                 if (!m.betting_closes_at) return true;
                 // If set, check if still within window
@@ -62,12 +54,25 @@ export default function BettingModal({ isOpen, onClose, myId }: Props) {
 
             // Need names
             const pIds = new Set<string>();
-            bettableMatches.forEach((m: any) => { if (m.player_1) pIds.add(m.player_1); if (m.player_2) pIds.add(m.player_2); if (m.player_3) pIds.add(m.player_3); if (m.player_4) pIds.add(m.player_4); });
-            const { data: pNames } = await supabase.from('profiles').select('id, name, elo_mixed_doubles, ntrp').in('id', Array.from(pIds));
+            bettableMatches.forEach((m) => {
+                if (m.player_1) pIds.add(m.player_1);
+                if (m.player_2) pIds.add(m.player_2);
+                if (m.player_3) pIds.add(m.player_3);
+                if (m.player_4) pIds.add(m.player_4);
+            });
 
-            const enriched = bettableMatches.map((m: any) => {
-                const getP = (id: string) => pNames?.find((p: any) => p.id === id);
-                const p1 = getP(m.player_1), p2 = getP(m.player_2), p3 = getP(m.player_3), p4 = getP(m.player_4);
+            const { data: pNames } = await supabase
+                .from('profiles')
+                .select('id, name, elo_mixed_doubles, ntrp')
+                .in('id', Array.from(pIds));
+
+            const profilesMap = new Map((pNames || []).map(p => [p.id, p]));
+
+            const enriched = bettableMatches.map((m) => {
+                const p1 = m.player_1 ? profilesMap.get(m.player_1) : null;
+                const p2 = m.player_2 ? profilesMap.get(m.player_2) : null;
+                const p3 = m.player_3 ? profilesMap.get(m.player_3) : null;
+                const p4 = m.player_4 ? profilesMap.get(m.player_4) : null;
 
                 // Estimate Team ELO (Avg)
                 const t1Elo = ((p1?.elo_mixed_doubles || 1200) + (p2?.elo_mixed_doubles || 1200)) / 2;
@@ -77,16 +82,16 @@ export default function BettingModal({ isOpen, onClose, myId }: Props) {
                     ...m,
                     p1_name: p1?.name, p2_name: p2?.name, p3_name: p3?.name, p4_name: p4?.name,
                     elo_team1: t1Elo, elo_team2: t2Elo
-                };
+                } as BettingMatch;
             });
             setMatches(enriched);
         } else {
             setMatches([]);
         }
         setLoading(false);
-    };
+    }, []);
 
-    const fetchHistory = async () => {
+    const fetchHistory = useCallback(async () => {
         setLoading(true);
         try {
             const bets = await BettingSystem.fetchMyBets(myId);
@@ -95,7 +100,18 @@ export default function BettingModal({ isOpen, onClose, myId }: Props) {
             console.error(e);
         }
         setLoading(false);
-    };
+    }, [myId]);
+
+    useEffect(() => {
+        if (isOpen) {
+            // Data fetching on modal open - valid pattern
+            // eslint-disable-next-line react-hooks/set-state-in-effect
+            void fetchMyPoint();
+            if (activeTab === 'LIVE') void fetchDraftMatches();
+            else void fetchHistory();
+        }
+    }, [isOpen, activeTab, fetchMyPoint, fetchDraftMatches, fetchHistory]);
+
 
     const handleBet = async (m: BettingMatch, pick: 'TEAM_1' | 'TEAM_2') => {
         const calcOdds = BettingSystem.calculateOdds(m.elo_team1, m.elo_team2);
@@ -116,8 +132,9 @@ export default function BettingModal({ isOpen, onClose, myId }: Props) {
             alert("✅ 배팅 성공! 행운을 빕니다!");
             fetchMyPoint(); // Refresh Point
             fetchDraftMatches(); // Refresh UI
-        } catch (e: any) {
-            alert("🚨 배팅 실패: " + (e.message || e.details || JSON.stringify(e)));
+        } catch (e: unknown) {
+            const err = e as { message?: string; details?: string };
+            alert("🚨 배팅 실패: " + (err.message || err.details || JSON.stringify(e)));
         }
         setPlacing(false);
     };

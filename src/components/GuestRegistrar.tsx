@@ -1,210 +1,143 @@
 import { useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { initialEloFromNtrp, NTRP_OPTIONS } from '../utils/ratingPolicy'; // Display Only
 
-interface Props {
+interface GuestRegistrarProps {
+    onRegister: (playerId: string) => void;
     onClose: () => void;
-    onSuccess: () => void;
 }
 
-export default function GuestRegistrar({ onClose, onSuccess }: Props) {
+export default function GuestRegistrar({ onRegister, onClose }: GuestRegistrarProps) {
     const [name, setName] = useState('');
-    const [ntrp, setNtrp] = useState('3.0'); // Default
-    const [gender, setGender] = useState('Male');
-    const [departureTime, setDepartureTime] = useState('23:00');
+    const [ntrp, setNtrp] = useState<string>('3.0');
+    const [gender, setGender] = useState<'Male' | 'Female'>('Male');
+    const [departureTime, setDepartureTime] = useState<string>(
+        new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString().slice(11, 16)
+    );
     const [loading, setLoading] = useState(false);
 
     const handleRegister = async () => {
-        if (!name.trim()) return alert("이름을 입력해주세요."); // 공백 입력 방지
+        if (!name.trim()) return alert('이름을 입력해주세요.');
         setLoading(true);
 
         try {
-            // 1. 게스트 밸런스 패치 (NTRP + 0.25) - 기존 로직 유지
-            const realScore = parseFloat(ntrp);
-            const boostedScore = realScore + 0.25;
-            const targetName = `${name.trim()} (G)`;
+            // Calculate Departure Time ISO
+            const now = new Date();
+            const [h, m] = departureTime.split(':').map(Number);
+            const depDate = new Date();
+            depDate.setHours(h, m, 0, 0);
+            if (depDate < now) depDate.setDate(depDate.getDate() + 1);
 
-            // ---------------------------------------------------------
-            // 🔍 STEP 1: Profile Handling (Reuse Strategy)
-            // ---------------------------------------------------------
-            const { data: existingGuest, error: searchError } = await supabase
-                .from('profiles')
-                .select('id, name')
-                .eq('name', targetName)
-                .eq('is_guest', true)
-                .maybeSingle();
-
-            if (searchError && searchError.code !== 'PGRST116') throw searchError;
-
-            let guestId: string;
-
-            if (existingGuest) {
-                // [Condition A] Reuse existing ID
-                console.log(`♻️ Returning Guest Found: ${existingGuest.name} (${existingGuest.id})`);
-                guestId = existingGuest.id;
-            } else {
-                // [Condition B] Create New Profile
-                const generateGuestId = () => {
-                    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-                        return crypto.randomUUID();
-                    }
-                    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-                        const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
-                        return v.toString(16);
-                    });
-                };
-                guestId = generateGuestId();
-                const initialElo = Math.round(boostedScore * 400);
-
-                const { error: profileError } = await supabase.from('profiles').insert({
-                    id: guestId,
-                    email: `guest_${guestId.slice(0, 8)}@temp.com`,
-                    name: targetName,
-                    ntrp: boostedScore,
-                    gender: gender,
-                    is_guest: true,
-                    role: 'member',
-                    elo_men_doubles: initialElo,
-                    elo_women_doubles: initialElo,
-                    elo_mixed_doubles: initialElo,
-                    elo_singles: initialElo,
-                    games_played_today: 0
-                });
-
-                if (profileError) throw profileError;
-                console.log(`✨ New Guest Profile Created: ${targetName} (${guestId})`);
-            }
-
-            // ---------------------------------------------------------
-            // 🛑 STEP 2: Queue Handling (Block Duplicates Strategy)
-            // ---------------------------------------------------------
-
-            // Check if ALREADY in queue
-            const { data: queueCheck, error: queueCheckError } = await supabase
-                .from('queue')
-                .select('id')
-                .eq('player_id', guestId)
-                .eq('is_active', true)
-                .maybeSingle();
-
-            if (queueCheckError && queueCheckError.code !== 'PGRST116') throw queueCheckError;
-
-            if (queueCheck) {
-                // [Condition A] Already in Queue -> STOP
-                alert("🚫 이미 대기열에 등록된 선수입니다!");
-                onClose(); // Close modal nicely
-                return; // Stop execution
-            }
-
-            // [Condition B] Not in Queue -> Insert
-            const { error: queueError } = await supabase.from('queue').insert({
-                player_id: guestId,
-                joined_at: new Date().toISOString(),
-                is_active: true,
-                priority_score: 5000 + (boostedScore * 100), // Original Priority Logic
-                departure_time: departureTime
+            // RPC Call (Atomic Registration & Enqueue)
+            // Policies for ELO and Priority are handled entirely in the DB
+            const { data, error } = await supabase.rpc('register_guest_and_enqueue', {
+                p_name: name,
+                p_ntrp: parseFloat(ntrp),
+                p_gender: gender,
+                p_departure_time: depDate.toISOString()
             });
 
-            if (queueError) throw queueError;
+            if (error) throw error;
 
-            alert(`✅ 게스트 [${name}] 등록 완료!`);
-            onSuccess();
+            type GuestRpcResponse = { player_id: string; reused: boolean; initial_elo: number };
+            const { player_id, reused, initial_elo } = data as GuestRpcResponse;
+
+            if (reused) {
+                alert(`✅ 기존 게스트 프로필 사용: ${name} (G)`);
+            } else {
+                alert(`🎉 새 게스트 등록 완료: ${name} (G) (ELO ${initial_elo})`);
+            }
+
+            onRegister(player_id);
             onClose();
 
-        } catch (e: unknown) {
-            const err = e as Error;
+        } catch (err) {
             console.error(err);
-            alert("등록 실패: " + (err.message || "알 수 없는 오류"));
+            alert('등록 실패: 시스템 오류');
         } finally {
             setLoading(false);
         }
     };
 
     return (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fadeIn">
-            {/* 배경 클릭 시 닫기 */}
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
             <div className="absolute inset-0" onClick={onClose}></div>
 
             <div className="bg-slate-800 border border-slate-600 rounded-2xl w-full max-w-sm p-6 shadow-2xl relative z-10">
                 <button
                     onClick={onClose}
-                    className="absolute top-4 right-4 text-slate-400 hover:text-white transition-colors"
+                    className="absolute top-4 right-4 text-slate-400 hover:text-white"
                 >
                     ✕
                 </button>
 
                 <h3 className="text-xl font-bold text-white mb-1">⚡ 게스트 3초 등록</h3>
-                <p className="text-xs text-slate-400 mb-6">게스트는 밸런스를 위해 NTRP +0.25로 적용됩니다.</p>
+                <p className="text-xs text-slate-400 mb-6">
+                    게스트는 밸런스를 위해 NTRP +0.25로 매칭됩니다.
+                </p>
 
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-xs text-slate-400 mb-1">이름 (Name)</label>
+                        <label className="block text-xs text-slate-400 mb-1">이름</label>
                         <input
-                            type="text"
-                            className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-white focus:border-lime-500 outline-none font-bold placeholder-slate-600"
-                            placeholder="예: 김테니"
+                            className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-white"
                             value={name}
                             onChange={(e) => setName(e.target.value)}
                             autoFocus
+                            placeholder="예: 김테니"
                         />
                     </div>
 
                     <div className="flex gap-4">
-                        <div className="flex-1">
-                            <label className="block text-xs text-slate-400 mb-1">실력 (NTRP)</label>
-                            <select
-                                value={ntrp}
-                                onChange={(e) => setNtrp(e.target.value)}
-                                className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-white text-xs font-bold focus:border-lime-500 outline-none"
+                        <select
+                            value={ntrp}
+                            onChange={(e) => setNtrp(e.target.value)}
+                            className="flex-1 bg-slate-900 border border-slate-700 rounded-xl p-3 text-white"
+                        >
+                            {NTRP_OPTIONS.map((v) => (
+                                <option key={v} value={v.toString()}>
+                                    {v.toFixed(1)}
+                                </option>
+                            ))}
+                        </select>
+
+                        <div className="flex bg-slate-900 rounded-xl p-1 border border-slate-700 h-[42px] flex-1">
+                            <button
+                                type="button"
+                                onClick={() => setGender('Male')}
+                                className={`flex-1 rounded-lg ${gender === 'Male' ? 'bg-blue-600 text-white' : 'text-slate-400'}`}
                             >
-                                <option value="1.0">1.0 (입문)</option>
-                                <option value="2.0">2.0 (초보)</option>
-                                <option value="2.5">2.5 (초중급)</option>
-                                <option value="3.0">3.0 (중급 - 평균)</option>
-                                <option value="3.5">3.5 (중상급)</option>
-                                <option value="4.0">4.0 (상급)</option>
-                                <option value="4.5">4.5 (선출)</option>
-                            </select>
-                        </div>
-
-                        <div className="flex-1">
-                            <label className="block text-xs text-slate-400 mb-1">성별</label>
-                            <div className="flex bg-slate-900 rounded-xl p-1 border border-slate-700 h-[42px]">
-                                <button
-                                    type="button"
-                                    onClick={() => setGender('Male')}
-                                    className={`flex-1 rounded-lg text-xs font-bold transition-all ${gender === 'Male' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
-                                >
-                                    남
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setGender('Female')}
-                                    className={`flex-1 rounded-lg text-xs font-bold transition-all ${gender === 'Female' ? 'bg-rose-600 text-white' : 'text-slate-400 hover:text-white'}`}
-                                >
-                                    여
-                                </button>
-                            </div>
+                                남
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setGender('Female')}
+                                className={`flex-1 rounded-lg ${gender === 'Female' ? 'bg-rose-600 text-white' : 'text-slate-400'}`}
+                            >
+                                여
+                            </button>
                         </div>
                     </div>
 
-                    <div>
-                        <label className="block text-xs text-slate-400 mb-1">가는 시간 (Departure)</label>
-                        <input
-                            type="time"
-                            value={departureTime}
-                            onChange={(e) => setDepartureTime(e.target.value)}
-                            className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-white font-bold outline-none focus:border-lime-500"
-                        />
-                    </div>
-
-                    <button
-                        onClick={handleRegister}
-                        disabled={loading}
-                        className="w-full py-4 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold rounded-xl mt-4 shadow-lg disabled:opacity-50 transition-all active:scale-[0.98]"
-                    >
-                        {loading ? "등록 중..." : "🚀 대기열 즉시 투입"}
-                    </button>
+                    <input
+                        type="time"
+                        value={departureTime}
+                        onChange={(e) => setDepartureTime(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-white"
+                    />
                 </div>
+
+                <button
+                    onClick={handleRegister}
+                    disabled={loading}
+                    className="w-full mt-6 py-4 bg-lime-500 hover:bg-lime-400 text-black font-black rounded-xl disabled:opacity-50"
+                >
+                    {loading ? '등록 중...' : '등록 완료'}
+                </button>
+
+                <p className="text-center text-[10px] text-slate-500 mt-3 font-mono">
+                    초기 ELO {initialEloFromNtrp(parseFloat(ntrp))} / 매칭 보정 +0.25
+                </p>
             </div>
         </div>
     );

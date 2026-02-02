@@ -1,15 +1,58 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 // Services
+// Services
 import { calculatePriorityScore, generateV83Match } from '../services/matchingSystem';
-import { reportMatchResult, confirmMatchResult, rejectMatchResult } from '../services/matchVerification';
-// Types
-import { Database } from '../types/supabase';
 
-type Match = Database['public']['Tables']['matches']['Row'];
-type Profile = Database['public']['Tables']['profiles']['Row'];
+// V3 Helper: Extract error from RPC JSON response
+type RpcResponse = { success?: boolean; error?: string; message?: string } | null;
+const getRpcError = (data: unknown): string | null => {
+    if (data && typeof data === 'object' && 'error' in data) {
+        return (data as RpcResponse)?.error || null;
+    }
+    return null;
+};
+
+// Local Types - Match Row from V3 Schema
+type Match = {
+    id: string;
+    created_at: string | null;
+    player_1: string | null;
+    player_2: string | null;
+    player_3: string | null;
+    player_4: string | null;
+    status: string | null;
+    score_team1: number | null;
+    score_team2: number | null;
+    winner_team: string | null;
+    match_category: string | null;
+    match_type: string | null;
+    reported_by: string | null;
+    confirmed_by: string | null;
+    start_time: string | null;
+    end_time: string | null;
+    betting_closes_at: string | null;
+    court_name: string | null;
+    mvp_voting_open: boolean | null;
+    corrections_count: number | null;
+};
+
+// Local Profile type
+type Profile = {
+    id: string;
+    name: string | null;
+    gender: string | null;
+    ntrp: number | null;
+    elo_mens_doubles: number | null;
+    elo_womens_doubles: number | null;
+    elo_mixed_doubles: number | null;
+    elo_singles: number | null;
+    is_guest: boolean | null;
+    games_played_today: number | null;
+};
 
 // Queue Type (Custom combination for UI)
+// Aligned with matchingSystem.QueueItem
 type QueueCandidate = {
     player_id: string;
     priority_score: number;
@@ -17,6 +60,7 @@ type QueueCandidate = {
     departure_time: string;
     profiles: Profile | null; // Safe Fetch
     finalScore: number;
+    waitMinutes: number; // Required by matchingSystem.QueueItem
 };
 
 // Extends Match with Player Names for UI
@@ -29,7 +73,10 @@ interface EnrichedMatch extends Match {
 
 import MatchReviewModal from './MatchReviewModal';
 
-export default function CourtBoard({ user }: { user: any }) {
+// User type for props - only need id for checking participation
+type UserProp = { id: string };
+
+export default function CourtBoard({ user }: { user: UserProp | null }) {
     const [courts, setCourts] = useState<string[]>(['Court A', 'Court B']);
     const [activeMatches, setActiveMatches] = useState<EnrichedMatch[]>([]);
     const [loading, setLoading] = useState(false);
@@ -52,12 +99,13 @@ export default function CourtBoard({ user }: { user: any }) {
     const [matchReviewTarget, setMatchReviewTarget] = useState<EnrichedMatch | null>(null);
 
     // [New] Notification Banner Logic
-    // Find pending matches involving user that are NOT on any court (Instant Released)
-    const pendingReviewMatch = user ? activeMatches.find(m =>
-        m.status === 'PENDING' &&
+    // Find SCORING matches involving user that are NOT on any court (Instant Released)
+    // V3: Uses SCORING status instead of PENDING
+    const pendingReviewMatch = useMemo(() => user ? activeMatches.find(m =>
+        m.status === 'SCORING' &&
         m.court_name === null &&
         ([m.player_1, m.player_2, m.player_3, m.player_4].includes(user.id) || matchReviewTarget?.id === m.id)
-    ) : null;
+    ) : null, [user, activeMatches, matchReviewTarget]);
 
     // Check if I am the opponent (needs to confirm) or reporter (waiting)
     const isPendingOpponent = pendingReviewMatch && pendingReviewMatch.reported_by !== user.id;
@@ -121,16 +169,23 @@ export default function CourtBoard({ user }: { user: any }) {
             .select(`*, profiles (*)`)
             .eq('is_active', true);
 
-        const queueData = data as any[]; // Complex join type, casting to any[] for mapping convenience
-
-        if (!queueData) return [];
+        // Safe type assertion for joined query result
+        type QueueWithProfile = {
+            player_id: string;
+            priority_score: number;
+            joined_at: string;
+            departure_time: string;
+            profiles: Profile | null;
+        };
+        const queueData = (data ?? []) as QueueWithProfile[];
 
         const scored = queueData.map((item) => ({
             ...item,
             priority_score: item.priority_score,
-            finalScore: calculatePriorityScore(item)
+            finalScore: calculatePriorityScore(item),
+            waitMinutes: 0 // Placeholder, calculated in matching
         }));
-        return scored.sort((a: any, b: any) => b.finalScore - a.finalScore) as QueueCandidate[];
+        return scored.sort((a, b) => b.finalScore - a.finalScore) as QueueCandidate[];
     };
 
     // --- COURT MANAGEMENT ---
@@ -157,19 +212,18 @@ export default function CourtBoard({ user }: { user: any }) {
                 throw new Error("❌ Not enough players or no valid combination.");
             }
 
-            const { matchType, team1, team2, playerIds } = matchResult;
+            const { matchType, playerIds } = matchResult;
 
-            const { error } = await supabase.from('matches').insert({
-                court_name: courtName,
-                status: 'DRAFT',
-                match_category: matchType,
-                player_1: team1[0].player_id, player_2: team1[1].player_id,
-                player_3: team2[0].player_id, player_4: team2[1].player_id
+            // V9.7.2: Strict RPC Model - create_match_draft
+            const { data, error } = await supabase.rpc('create_match_draft', {
+                p_player_ids: playerIds,
+                p_match_type: matchType as 'MIXED' | 'MENS_DOUBLES' | 'WOMENS_DOUBLES' | 'SINGLES',
+                p_court_name: courtName
             });
-            if (error) throw error;
-            await supabase.from('queue').delete().in('player_id', playerIds);
+            const rpcErr = getRpcError(data);
+            if (error || rpcErr) throw new Error(error?.message || rpcErr || 'Unknown error');
             fetchMatches();
-        } catch (e: any) { alert(e.message); }
+        } catch (e: Error | unknown) { alert(e instanceof Error ? e.message : 'Unknown error'); }
         setLoading(false);
     };
 
@@ -211,24 +265,22 @@ export default function CourtBoard({ user }: { user: any }) {
             const pIds = selectedManualPlayers.map(p => p.player_id);
             const isSingles = count === 2;
 
-            const { error } = await supabase.from('matches').insert({
-                court_name: manualTargetCourt,
-                status: 'DRAFT',
-                match_category: isSingles ? 'SINGLES' : 'MIXED', // Default to MIXED for manual doubles unless refining further
-                player_1: pIds[0],
-                player_2: isSingles ? null : pIds[1],
-                // For singles, pIds[1] becomes player_3 (opponent)
-                player_3: isSingles ? pIds[1] : pIds[2],
-                player_4: isSingles ? null : pIds[3]
+            // V9.7.2: Strict RPC Model - create_match_draft
+            const { data, error } = await supabase.rpc('create_match_draft', {
+                p_player_ids: pIds,
+                p_match_type: isSingles ? 'SINGLES' : 'MIXED',
+                p_court_name: manualTargetCourt
             });
-
-            if (error) throw error;
-            await supabase.from('queue').delete().in('player_id', pIds);
+            const rpcErr = getRpcError(data);
+            if (error || rpcErr) throw new Error(error?.message || rpcErr || 'Unknown error');
             setIsManualModalOpen(false);
             setManualTargetCourt(null);
             setSelectedManualPlayers([]);
             fetchMatches();
-        } catch (e: any) { alert("Error: " + e.message); }
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : 'Unknown error';
+            alert("Error: " + msg);
+        }
         setLoading(false);
     };
 
@@ -250,61 +302,70 @@ export default function CourtBoard({ user }: { user: any }) {
         if (!swapTarget) return;
         if (!confirm(`🔄 Swap with [${candidate.profiles?.name}]?`)) return;
         try {
-            await supabase.from('matches').update({ [swapTarget.col]: candidate.player_id }).eq('id', swapTarget.matchId);
+            // Direct table update (swap_player RPC not defined in DB)
+            const updateCol = swapTarget.col; // 'player_1', 'player_2', etc.
+            const { error: updateError } = await supabase
+                .from('matches')
+                .update({ [updateCol]: candidate.player_id })
+                .eq('id', swapTarget.matchId);
+            if (updateError) throw updateError;
+
+            // Return old player to queue (upsert with ignoreDuplicates)
+            await supabase.from('queue').upsert({
+                player_id: swapTarget.oldId,
+                is_active: true,
+                priority_score: 800 // Base re-queue priority
+            }, { onConflict: 'player_id', ignoreDuplicates: true });
+
+            // Remove new player from queue
             await supabase.from('queue').delete().eq('player_id', candidate.player_id);
-            if (swapTarget.oldId) {
-                await supabase.from('queue').insert({
-                    player_id: swapTarget.oldId,
-                    priority_score: 1000,
-                    joined_at: new Date().toISOString(),
-                    is_active: true
-                });
-            }
             setIsSwapModalOpen(false);
             setSwapTarget(null);
             fetchMatches();
-        } catch (e: any) { alert("Swap Error: " + e.message); }
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : 'Swap failed';
+            alert("Swap Error: " + msg);
+        }
     };
 
     // --- GAME CONTROL ---
     const handleStartGame = async (matchId: string) => {
-        const startTime = new Date();
-        const bettingClosesAt = new Date(startTime.getTime() + 5 * 60 * 1000);
-        await supabase.from('matches').update({
-            status: 'PLAYING',
-            start_time: startTime.toISOString(),
-            betting_closes_at: bettingClosesAt.toISOString()
-        }).eq('id', matchId);
-        fetchMatches();
+        try {
+            // V9.7.2: Strict RPC Model
+            const { data, error } = await supabase.rpc('start_match', { p_match_id: matchId });
+            const rpcErr = getRpcError(data);
+            if (error || rpcErr) throw new Error(error?.message || rpcErr || 'Unknown error');
+            fetchMatches();
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : 'Start failed';
+            alert("Start Error: " + msg);
+        }
     };
 
     const handleEndGame = async (matchId: string) => {
-        if (confirm("Finish game?")) {
-            await supabase.from('matches').update({ status: 'SCORING' }).eq('id', matchId);
+        if (!confirm("Finish game?")) return;
+        try {
+            // V9.7.2: Strict RPC Model
+            const { data, error } = await supabase.rpc('end_match', { p_match_id: matchId });
+            const rpcErr = getRpcError(data);
+            if (error || rpcErr) throw new Error(error?.message || rpcErr || 'Unknown error');
             fetchMatches();
-        }
+        } catch (e: Error | unknown) { alert(e instanceof Error ? e.message : 'Unknown error'); }
     };
 
     const handleCancelMatch = async (matchId: string) => {
         if (!confirm("⚠️ Cancel match?")) return;
         setLoading(true);
         try {
-            const match = activeMatches.find(m => m.id === matchId);
-            if (match) {
-                const pIds = [match.player_1, match.player_2, match.player_3, match.player_4].filter(Boolean) as string[];
-                const { error } = await supabase.from('matches').delete().eq('id', matchId);
-                if (error) throw error;
-                if (pIds.length > 0) {
-                    await supabase.from('queue').upsert(pIds.map(pid => ({
-                        player_id: pid,
-                        joined_at: new Date().toISOString(),
-                        priority_score: 1000,
-                        is_active: true
-                    })), { onConflict: 'player_id' });
-                }
-                fetchMatches();
-            }
-        } catch (e: any) { alert("Error: " + e.message); }
+            // V9.7.2: Strict RPC Model
+            const { data, error } = await supabase.rpc('cancel_match', { p_match_id: matchId });
+            const rpcErr = getRpcError(data);
+            if (error || rpcErr) throw new Error(error?.message || rpcErr || 'Unknown error');
+            fetchMatches();
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : 'Cancel failed';
+            alert("Error: " + msg);
+        }
         setLoading(false);
     };
 
@@ -328,18 +389,21 @@ export default function CourtBoard({ user }: { user: any }) {
 
         setLoading(true);
         try {
-            // Update Metadata First
-            await supabase.from('matches').update({
-                winner_team: winner,
-                match_type: isTournament[matchId] ? 'TOURNAMENT' : 'REGULAR',
-                // category is usually set at creation, but could refine here if needed
-            }).eq('id', matchId);
+            // V9.7.2: Strict RPC Model - report_score with correct params
+            const { data, error } = await supabase.rpc('report_score', {
+                p_match_id: matchId,
+                p_team1_score: s1,
+                p_team2_score: s2,
+                p_winner: winner
+            });
+            const rpcErr = getRpcError(data);
+            if (error || rpcErr) throw new Error(error?.message || rpcErr || 'Unknown error');
 
-            // Report via Service
-            await reportMatchResult(matchId, s1, s2, user.id);
+            // V9.7.2: Strict RPC Model - report_score logic complete
+            // Service call removed - RPC handles everything
             alert("✅ Reported! Waiting for confirmation.");
             fetchMatches();
-        } catch (e: any) { alert(e.message); }
+        } catch (e: Error | unknown) { alert(e instanceof Error ? e.message : 'Unknown error'); }
         setLoading(false);
     };
 
@@ -348,12 +412,35 @@ export default function CourtBoard({ user }: { user: any }) {
         if (!confirm("✅ Confirm result?")) return;
         if (!user) return alert("Login required");
 
+        const match = activeMatches.find(m => m.id === matchId);
+        if (!match) return;
+
         setLoading(true);
         try {
-            await confirmMatchResult(matchId, user.id);
+            const { data, error } = await supabase.rpc('finish_match_v2', {
+                p_match_id: matchId,
+                p_team1_score: match.score_team1 || 0,
+                p_team2_score: match.score_team2 || 0,
+                p_confirmation_type: 'NORMAL_CONFIRM'
+            });
+
+            if (error) throw error;
+
+            // Check for logical error in JSON response
+            type RpcError = { error?: string };
+            if (data && typeof data === 'object' && 'error' in data) {
+                const rpcData = data as RpcError;
+                if (rpcData.error && rpcData.error !== 'ALREADY_FINISHED') {
+                    throw new Error(rpcData.error);
+                }
+            }
+
             alert("🎉 Match Confirmed! ELO updated.");
             fetchMatches();
-        } catch (e: any) { alert(e.message); }
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : 'Confirm failed';
+            alert(msg);
+        }
         setLoading(false);
     };
 
@@ -362,15 +449,21 @@ export default function CourtBoard({ user }: { user: any }) {
         if (!user) return alert("Login required");
         setLoading(true);
         try {
-            await rejectMatchResult(matchId, user.id);
-            alert("🛑 Rejected.");
+            const { data, error } = await supabase.rpc('dispute_match', { p_match_id: matchId });
+            const rpcErr = getRpcError(data);
+            if (error || rpcErr) throw new Error(error?.message || rpcErr || 'Unknown error');
+
+            alert("🛑 Rejected (Status: DISPUTED).");
             fetchMatches();
-        } catch (e: any) { alert(e.message); }
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : 'Reject failed';
+            alert(msg);
+        }
         setLoading(false);
     };
 
     // --- RENDER HELPERS ---
-    const getMyTeam = (match: any, uid: string) => {
+    const getMyTeam = (match: EnrichedMatch | undefined, uid: string) => {
         if (!match || !uid) return 0;
         if ([match.player_1, match.player_2].includes(uid)) return 1;
         if ([match.player_3, match.player_4].includes(uid)) return 2;

@@ -5,17 +5,19 @@ import type { User } from '@supabase/supabase-js';
 
 type QueueItem = {
     id: string;
-    user_id: string;
-    departure_time: string;
-    created_at: string;
-    priority_score: number;
+    player_id: string;  // V3: Changed from user_id
+    departure_time: string | null;
+    joined_at: string;  // V3: Changed from created_at
+    priority_score: number | null;
     profiles: {
         name: string;
-        ntrp: number;
-        gender: string;
-        games_played_today: number;
-        elo_men_doubles: number | null;
-        elo_women_doubles: number | null;
+        ntrp: number | null;
+        gender: string | null;
+        games_played_today: number | null;
+        elo_mens_doubles: number | null;   // V3: men → mens
+        elo_womens_doubles: number | null; // V3: women → womens
+        elo_mixed_doubles: number | null;
+        is_guest: boolean | null;
     } | null;
 };
 
@@ -31,42 +33,46 @@ export default function QueueBoard({ user }: { user: User }) {
     const [queue, setQueue] = useState<QueueItem[]>([]);
     const [inGamePlayers, setInGamePlayers] = useState<InGamePlayer[]>([]);
     const [loading, setLoading] = useState(true);
-    const [now, setNow] = useState(new Date());
 
     const fetchQueue = async () => {
-        // 1. Fetch Waiting Queue
+        // V3 Schema: Use correct column names
         const { data, error } = await supabase
             .from('queue')
             .select(`
                 *,
-                profiles (name, ntrp, gender, games_played_today, elo_men_doubles, elo_women_doubles, is_guest, elo_mixed_doubles, elo_singles)
+                profiles (name, ntrp, gender, games_played_today, elo_mens_doubles, elo_womens_doubles, is_guest, elo_mixed_doubles, elo_singles)
             `)
             .eq('is_active', true);
 
-        if (!error) setQueue(data as any || []);
+        if (!error) setQueue(data as QueueItem[] || []);
 
         // 2. [New] Fetch In-Game Players
         const { data: matchData } = await supabase
             .from('matches')
             .select('id, player_1, player_2, player_3, player_4, court_name, status')
-            .in('status', ['DRAFT', 'PLAYING', 'SCORING', 'PENDING']);
+            // V3: match_status_t = DRAFT, PLAYING, SCORING, FINISHED, CANCELLED, DISPUTED (no PENDING)
+            .in('status', ['DRAFT', 'PLAYING', 'SCORING']);
 
         if (matchData && matchData.length > 0) {
+            // Type for match data from DB
+            type MatchDataRow = { player_1: string | null; player_2: string | null; player_3: string | null; player_4: string | null; court_name: string; status: string };
+            type ProfileRow = { id: string; name: string };
+
             const allPlayerIds = new Set<string>();
-            matchData.forEach((m: any) => {
-                [m.player_1, m.player_2, m.player_3, m.player_4].filter(Boolean).forEach(id => allPlayerIds.add(id));
+            matchData.forEach((m: MatchDataRow) => {
+                [m.player_1, m.player_2, m.player_3, m.player_4].filter(Boolean).forEach(id => allPlayerIds.add(id as string));
             });
 
             if (allPlayerIds.size > 0) {
                 const { data: profiles } = await supabase.from('profiles').select('id, name').in('id', Array.from(allPlayerIds));
-                const profileMap = new Map(profiles?.map((p: any) => [p.id, p.name]));
+                const profileMap = new Map(profiles?.map((p: ProfileRow) => [p.id, p.name]));
 
                 const playingList: InGamePlayer[] = [];
-                matchData.forEach((m: any) => {
+                matchData.forEach((m: MatchDataRow) => {
                     [m.player_1, m.player_2, m.player_3, m.player_4].filter(Boolean).forEach(pid => {
                         playingList.push({
-                            id: pid,
-                            name: (profileMap.get(pid) as string) || 'Unknown',
+                            id: pid as string,
+                            name: (profileMap.get(pid as string) as string) || 'Unknown',
                             court_name: m.court_name,
                             status: m.status
                         });
@@ -118,7 +124,8 @@ export default function QueueBoard({ user }: { user: User }) {
     };
 
     useEffect(() => {
-        fetchQueue();
+        // Data fetching on mount
+        void fetchQueue();
 
         // 1. 실시간 DB 변경 감지
         const channel = supabase
@@ -128,12 +135,10 @@ export default function QueueBoard({ user }: { user: User }) {
 
         // 2. 1분마다 화면 갱신 및 자동 퇴장 체크
         const timer = setInterval(() => {
-            setNow(new Date());
-
             // 현재 큐 상태를 기반으로 퇴장 체크 수행
             // setQueue의 콜백을 활용하여 최신 상태값 접근
             setQueue(currentQueue => {
-                checkAutoExit(currentQueue);
+                void checkAutoExit(currentQueue);
                 return currentQueue;
             });
 
@@ -143,17 +148,13 @@ export default function QueueBoard({ user }: { user: User }) {
             supabase.removeChannel(channel);
             clearInterval(timer);
         };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const formatTime = (isoString: string) => {
-        const date = new Date(isoString);
-        return date.toTimeString().slice(0, 5);
-    };
-
-    const getDoublesElo = (profile: any) => {
+    const getDoublesElo = (profile: QueueItem['profiles']) => {
         if (!profile) return 1250;
-        const gender = (profile.gender || '').toLowerCase();
-        const score = gender === 'male' ? profile.elo_men_doubles : profile.elo_women_doubles;
+        const gender = (profile.gender || '').toUpperCase();  // V3: MALE/FEMALE
+        const score = gender === 'MALE' ? profile.elo_mens_doubles : profile.elo_womens_doubles;
         return score || 1250;
     };
 
@@ -168,7 +169,8 @@ export default function QueueBoard({ user }: { user: User }) {
             if (b.finalScore !== a.finalScore) {
                 return b.finalScore - a.finalScore;
             }
-            return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+            // V3: Use joined_at instead of created_at
+            return new Date(a.joined_at).getTime() - new Date(b.joined_at).getTime();
         });
     };
 
@@ -197,10 +199,10 @@ export default function QueueBoard({ user }: { user: User }) {
                     </div>
                 ) : (
                     sortedQueue.map((item, index) => {
-                        const profile = item.profiles || { name: '?', ntrp: 0, gender: 'Male', games_played_today: 0, elo_men_doubles: 1250, elo_women_doubles: 1250 };
-                        const isMe = item.user_id === user.id;
+                        const profile = item.profiles || { name: '?', ntrp: 0, gender: 'MALE', games_played_today: 0, elo_mens_doubles: 1250, elo_womens_doubles: 1250, elo_mixed_doubles: 1250, is_guest: false };
+                        const isMe = item.player_id === user.id;  // V3: user_id → player_id
 
-                        const isMale = (profile.gender || '').toLowerCase() === 'male';
+                        const isMale = (profile.gender || '').toUpperCase() === 'MALE';  // V3: MALE/FEMALE
                         const genderBadge = isMale ? 'M' : 'F';
                         const genderColor = isMale ? 'text-blue-300 bg-blue-900/60' : 'text-rose-300 bg-rose-900/60';
                         const elo = getDoublesElo(profile);
@@ -225,7 +227,7 @@ export default function QueueBoard({ user }: { user: User }) {
                                     </div>
                                 </div>
 
-                                <div className="col-span-2 text-slate-500">{formatTime(item.created_at)}</div>
+                                <div className="col-span-2 text-slate-500">{item.joined_at ? new Date(item.joined_at).toTimeString().slice(0, 5) : '-'}</div>
                                 <div className={`col-span-2 font-bold ${hasUrgentBuff ? 'text-rose-400 animate-pulse' : 'text-white'}`}>
                                     {item.departure_time}
                                 </div>
