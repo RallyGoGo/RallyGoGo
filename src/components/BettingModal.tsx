@@ -1,6 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
-import { BettingSystem, Bet } from '../services/bettingSystem';
 import { Database } from '../types/database.types';
 
 type MatchRow = Database['public']['Tables']['matches']['Row'];
@@ -11,130 +10,236 @@ type Props = {
     myId: string;
 };
 
-// Simplified Match Type for Betting List
+// Pool data for each match
+type PoolData = {
+    team1_total: number;
+    team2_total: number;
+    team1_odds: number;
+    team2_odds: number;
+    house_rate: number;
+    is_settled: boolean;
+};
+
+// Enriched match with player names and pool data
 type BettingMatch = MatchRow & {
-    p1_name?: string; p2_name?: string; p3_name?: string; p4_name?: string;
-    elo_team1: number; elo_team2: number;
-    odds_team1?: number;
-    odds_team2?: number;
+    p1_name?: string;
+    p2_name?: string;
+    p3_name?: string;
+    p4_name?: string;
+    pool?: PoolData;
+};
+
+// History bet type
+type HistoryBet = {
+    id: string;
+    match_id: string;
+    pick_team: string;
+    amount: number;
+    odds_at_bet: number;
+    result: string;
+    payout_amount?: number;
+    created_at: string;
 };
 
 export default function BettingModal({ isOpen, onClose, myId }: Props) {
     const [activeTab, setActiveTab] = useState<'LIVE' | 'HISTORY'>('LIVE');
     const [matches, setMatches] = useState<BettingMatch[]>([]);
     const [myPoint, setMyPoint] = useState<number>(0);
-    const [history, setHistory] = useState<Bet[]>([]);
+    const [history, setHistory] = useState<HistoryBet[]>([]);
     const [loading, setLoading] = useState(false);
     const [placing, setPlacing] = useState(false);
 
-    // Use useCallback to fix hoisting and dependency issues
+    // Fetch user's points
     const fetchMyPoint = useCallback(async () => {
         const { data } = await supabase.from('profiles').select('rally_point').eq('id', myId).maybeSingle();
         if (data) setMyPoint(data.rally_point || 0);
     }, [myId]);
 
+    // Fetch pool data for a match
+    const fetchPoolData = useCallback(async (matchId: string): Promise<PoolData> => {
+        const { data } = await supabase.rpc('get_betting_pool', { p_match_id: matchId });
+        if (data && typeof data === 'object' && 'success' in data && data.success) {
+            return {
+                team1_total: (data as PoolData).team1_total || 0,
+                team2_total: (data as PoolData).team2_total || 0,
+                team1_odds: (data as PoolData).team1_odds || 2.0,
+                team2_odds: (data as PoolData).team2_odds || 2.0,
+                house_rate: (data as PoolData).house_rate || 0.05,
+                is_settled: (data as PoolData).is_settled || false
+            };
+        }
+        return { team1_total: 0, team2_total: 0, team1_odds: 2.0, team2_odds: 2.0, house_rate: 0.05, is_settled: false };
+    }, []);
+
+    // Fetch bettable matches with pool data
     const fetchDraftMatches = useCallback(async () => {
         setLoading(true);
-        // ✅ [Fix] Include PLAYING for 5-minute betting window
-        const { data: matchesData } = await supabase
-            .from('matches')
-            .select('*')
-            .in('status', ['DRAFT', 'PLAYING'])
-            .order('created_at', { ascending: false });
+        try {
+            const { data: matchesData } = await supabase
+                .from('matches')
+                .select('*')
+                .in('status', ['DRAFT', 'PLAYING'])
+                .order('created_at', { ascending: false });
 
-        if (matchesData && matchesData.length > 0) {
-            // Filter out matches where betting window closed
-            const now = new Date();
-            const bettableMatches = matchesData.filter((m) => {
-                // If no betting_closes_at set, allow betting (pre-start)
-                if (!m.betting_closes_at) return true;
-                // If set, check if still within window
-                return new Date(m.betting_closes_at) > now;
-            });
+            if (matchesData && matchesData.length > 0) {
+                const now = new Date();
+                const bettableMatches = matchesData.filter((m) => {
+                    if (!m.betting_closes_at) return true;
+                    return new Date(m.betting_closes_at) > now;
+                });
 
-            // Need names
-            const pIds = new Set<string>();
-            bettableMatches.forEach((m) => {
-                if (m.player_1) pIds.add(m.player_1);
-                if (m.player_2) pIds.add(m.player_2);
-                if (m.player_3) pIds.add(m.player_3);
-                if (m.player_4) pIds.add(m.player_4);
-            });
+                // Get player names
+                const pIds = new Set<string>();
+                bettableMatches.forEach((m) => {
+                    if (m.player_1) pIds.add(m.player_1);
+                    if (m.player_2) pIds.add(m.player_2);
+                    if (m.player_3) pIds.add(m.player_3);
+                    if (m.player_4) pIds.add(m.player_4);
+                });
 
-            const { data: pNames } = await supabase
-                .from('profiles')
-                .select('id, name, elo_mixed_doubles, ntrp')
-                .in('id', Array.from(pIds));
+                const { data: pNames } = await supabase
+                    .from('profiles')
+                    .select('id, name')
+                    .in('id', Array.from(pIds));
 
-            const profilesMap = new Map((pNames || []).map(p => [p.id, p]));
+                const profilesMap = new Map((pNames || []).map(p => [p.id, p.name]));
 
-            const enriched = bettableMatches.map((m) => {
-                const p1 = m.player_1 ? profilesMap.get(m.player_1) : null;
-                const p2 = m.player_2 ? profilesMap.get(m.player_2) : null;
-                const p3 = m.player_3 ? profilesMap.get(m.player_3) : null;
-                const p4 = m.player_4 ? profilesMap.get(m.player_4) : null;
+                // Fetch pool data for each match
+                const enriched = await Promise.all(bettableMatches.map(async (m) => {
+                    const pool = await fetchPoolData(m.id);
+                    return {
+                        ...m,
+                        p1_name: m.player_1 ? profilesMap.get(m.player_1) : undefined,
+                        p2_name: m.player_2 ? profilesMap.get(m.player_2) : undefined,
+                        p3_name: m.player_3 ? profilesMap.get(m.player_3) : undefined,
+                        p4_name: m.player_4 ? profilesMap.get(m.player_4) : undefined,
+                        pool
+                    } as BettingMatch;
+                }));
 
-                // Estimate Team ELO (Avg)
-                const t1Elo = ((p1?.elo_mixed_doubles || 1200) + (p2?.elo_mixed_doubles || 1200)) / 2;
-                const t2Elo = ((p3?.elo_mixed_doubles || 1200) + (p4?.elo_mixed_doubles || 1200)) / 2;
-
-                return {
-                    ...m,
-                    p1_name: p1?.name, p2_name: p2?.name, p3_name: p3?.name, p4_name: p4?.name,
-                    elo_team1: t1Elo, elo_team2: t2Elo
-                } as BettingMatch;
-            });
-            setMatches(enriched);
-        } else {
+                setMatches(enriched);
+            } else {
+                setMatches([]);
+            }
+        } catch (e) {
+            console.error('[BettingModal] fetchDraftMatches error:', e);
             setMatches([]);
         }
         setLoading(false);
-    }, []);
+    }, [fetchPoolData]);
 
+    // Fetch betting history
     const fetchHistory = useCallback(async () => {
         setLoading(true);
         try {
-            const bets = await BettingSystem.fetchMyBets(myId);
-            setHistory(bets || []);
+            const { data } = await supabase
+                .from('bets')
+                .select('id, match_id, pick_team, amount, odds_at_bet, result, payout_amount, created_at')
+                .eq('user_id', myId)
+                .order('created_at', { ascending: false })
+                .limit(50);
+            setHistory((data || []) as HistoryBet[]);
         } catch (e) {
-            console.error(e);
+            console.error('[BettingModal] fetchHistory error:', e);
         }
         setLoading(false);
     }, [myId]);
 
+    // On modal open, fetch data
     useEffect(() => {
         if (isOpen) {
-            // Data fetching on modal open - valid pattern
-            // eslint-disable-next-line react-hooks/set-state-in-effect
             void fetchMyPoint();
             if (activeTab === 'LIVE') void fetchDraftMatches();
             else void fetchHistory();
         }
     }, [isOpen, activeTab, fetchMyPoint, fetchDraftMatches, fetchHistory]);
 
+    // Real-time subscription for pool updates
+    useEffect(() => {
+        if (!isOpen || activeTab !== 'LIVE') return;
 
+        const channel = supabase
+            .channel('betting-pools-live')
+            .on('postgres_changes',
+                { event: '*', schema: 'public', table: 'betting_pools' },
+                async (payload) => {
+                    // Update pool data for affected match
+                    const poolData = payload.new as { match_id?: string; team1_total?: number; team2_total?: number };
+                    if (poolData?.match_id) {
+                        setMatches(prev => prev.map(m => {
+                            if (m.id === poolData.match_id && poolData.team1_total !== undefined) {
+                                const total = (poolData.team1_total || 0) + (poolData.team2_total || 0);
+                                const houseRate = 0.05;
+                                const net = total * (1 - houseRate);
+                                return {
+                                    ...m,
+                                    pool: {
+                                        ...m.pool!,
+                                        team1_total: poolData.team1_total || 0,
+                                        team2_total: poolData.team2_total || 0,
+                                        team1_odds: (poolData.team1_total || 0) > 0 ? Math.max(1.01, +(net / (poolData.team1_total || 1)).toFixed(2)) : 2.0,
+                                        team2_odds: (poolData.team2_total || 0) > 0 ? Math.max(1.01, +(net / (poolData.team2_total || 1)).toFixed(2)) : 2.0,
+                                    }
+                                };
+                            }
+                            return m;
+                        }));
+                    }
+                })
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
+    }, [isOpen, activeTab]);
+
+    // Place bet using parimutuel system
     const handleBet = async (m: BettingMatch, pick: 'TEAM_1' | 'TEAM_2') => {
-        const calcOdds = BettingSystem.calculateOdds(m.elo_team1, m.elo_team2);
-        const myOdds = pick === 'TEAM_1' ? calcOdds.team1 : calcOdds.team2;
+        const currentOdds = pick === 'TEAM_1' ? (m.pool?.team1_odds || 2.0) : (m.pool?.team2_odds || 2.0);
+        const poolTotal = (m.pool?.team1_total || 0) + (m.pool?.team2_total || 0);
 
-        const input = prompt(`[${pick === 'TEAM_1' ? 'Team 1' : 'Team 2'}] 승리에 배팅하시겠습니까?\n\n💰 현재 배당률: ${myOdds}배\n💸 보유 포인트: ${myPoint} P\n\n배팅할 포인트를 입력하세요:`);
+        const input = prompt(
+            `[${pick === 'TEAM_1' ? 'Team 1' : 'Team 2'}] 승리에 배팅하시겠습니까?\n\n` +
+            `📊 현재 풀: ${poolTotal.toLocaleString()} P\n` +
+            `💰 예상 배당률: ${currentOdds.toFixed(2)}x (변동 가능)\n` +
+            `💸 보유 포인트: ${myPoint.toLocaleString()} P\n\n` +
+            `⚠️ 패리뮤추얼 방식: 최종 배당률은 배팅 마감 시점에 결정됩니다.\n\n` +
+            `배팅할 포인트를 입력하세요:`
+        );
         if (!input) return;
 
         const amount = parseInt(input, 10);
         if (isNaN(amount) || amount <= 0) return alert("올바른 금액을 입력하세요.");
         if (amount > myPoint) return alert("보유 포인트가 부족합니다.");
+        if (amount > 10000) return alert("최대 배팅 금액은 10,000 P입니다.");
 
-        if (!confirm(`${amount} 포인트를 배팅하시겠습니까? (취소 불가)`)) return;
+        if (!confirm(`${amount} 포인트를 배팅하시겠습니까?\n\n※ 패리뮤추얼 방식으로 운영됩니다.\n(최종 배당률은 경기 시작 시 확정)`)) return;
 
         setPlacing(true);
         try {
-            await BettingSystem.placeBet(m.id, myId, pick, amount, myOdds);
-            alert("✅ 배팅 성공! 행운을 빕니다!");
-            fetchMyPoint(); // Refresh Point
-            fetchDraftMatches(); // Refresh UI
+            const { data, error } = await supabase.rpc('place_bet_parimutuel', {
+                p_match_id: m.id,
+                p_pick_team: pick,
+                p_amount: amount
+            });
+
+            if (error) throw error;
+
+            type BetResponse = { success: boolean; error?: string; message?: string; new_balance?: number; team1_odds?: number; team2_odds?: number };
+            const response = data as BetResponse;
+
+            if (!response.success) {
+                throw new Error(response.error || response.message || '배팅 실패');
+            }
+
+            alert(`✅ 배팅 성공!\n\n현재 배당률: ${pick === 'TEAM_1' ? response.team1_odds?.toFixed(2) : response.team2_odds?.toFixed(2)}x\n잔액: ${response.new_balance?.toLocaleString()} P`);
+
+            // Refresh data
+            void fetchMyPoint();
+            void fetchDraftMatches();
         } catch (e: unknown) {
-            const err = e as { message?: string; details?: string };
-            alert("🚨 배팅 실패: " + (err.message || err.details || JSON.stringify(e)));
+            const err = e as { message?: string };
+            alert("🚨 배팅 실패: " + (err.message || JSON.stringify(e)));
         }
         setPlacing(false);
     };
@@ -152,6 +257,13 @@ export default function BettingModal({ isOpen, onClose, myId }: Props) {
                         <p className="text-xs text-slate-400 font-bold">MY POINT: <span className="text-yellow-400 text-lg">{myPoint.toLocaleString()} P</span></p>
                     </div>
                     <button onClick={onClose} className="bg-slate-800 p-2 rounded-full text-slate-400 hover:text-white transition-colors">✕</button>
+                </div>
+
+                {/* Parimutuel Badge */}
+                <div className="bg-gradient-to-r from-purple-900/50 to-indigo-900/50 px-4 py-2 text-center">
+                    <p className="text-xs text-purple-300">
+                        <span className="font-bold">📊 패리뮤추얼 방식</span> — 배당률이 실시간으로 변동됩니다
+                    </p>
                 </div>
 
                 {/* Tabs */}
@@ -174,22 +286,39 @@ export default function BettingModal({ isOpen, onClose, myId }: Props) {
                                 </div>
                             ) : (
                                 matches.map(m => {
-                                    const odds = BettingSystem.calculateOdds(m.elo_team1, m.elo_team2);
+                                    const pool = m.pool || { team1_total: 0, team2_total: 0, team1_odds: 2.0, team2_odds: 2.0, house_rate: 0.05, is_settled: false };
+                                    const totalPool = pool.team1_total + pool.team2_total;
+                                    const t1Pct = totalPool > 0 ? Math.round((pool.team1_total / totalPool) * 100) : 50;
+                                    const t2Pct = 100 - t1Pct;
+
                                     return (
                                         <div key={m.id} className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden shadow-lg relative group">
-                                            <div className="bg-slate-900/50 p-2 text-center text-[10px] text-slate-500 font-mono uppercase tracking-widest border-b border-slate-700/50">
-                                                Match Preview
+                                            {/* Pool Status Bar */}
+                                            <div className="bg-slate-900/50 p-2 border-b border-slate-700/50">
+                                                <div className="flex justify-between text-[10px] text-slate-400 mb-1">
+                                                    <span>풀: {totalPool.toLocaleString()}P</span>
+                                                    <span className="text-purple-400">수수료: 5%</span>
+                                                </div>
+                                                <div className="h-2 bg-slate-700 rounded-full overflow-hidden flex">
+                                                    <div className="bg-lime-500 h-full transition-all duration-500" style={{ width: `${t1Pct}%` }} />
+                                                    <div className="bg-rose-500 h-full transition-all duration-500" style={{ width: `${t2Pct}%` }} />
+                                                </div>
+                                                <div className="flex justify-between text-[10px] mt-1">
+                                                    <span className="text-lime-400">{pool.team1_total.toLocaleString()}P ({t1Pct}%)</span>
+                                                    <span className="text-rose-400">{pool.team2_total.toLocaleString()}P ({t2Pct}%)</span>
+                                                </div>
                                             </div>
-                                            <div className="p-4 flex justify-between items-center gap-2">
 
+                                            {/* Teams */}
+                                            <div className="p-4 flex justify-between items-center gap-2">
                                                 {/* Team 1 */}
                                                 <div
                                                     onClick={() => handleBet(m, 'TEAM_1')}
-                                                    className="flex-1 text-center bg-slate-700/30 hover:bg-lime-900/30 rounded-lg p-2 cursor-pointer transition-all active:scale-95 border border-transparent hover:border-lime-500/50"
+                                                    className="flex-1 text-center bg-slate-700/30 hover:bg-lime-900/30 rounded-lg p-3 cursor-pointer transition-all active:scale-95 border border-transparent hover:border-lime-500/50"
                                                 >
-                                                    <p className="text-xs text-slate-400 mb-1">{m.p1_name}</p>
-                                                    <p className="text-xs text-slate-400 mb-2">{m.p2_name}</p>
-                                                    <div className="text-xl font-black text-lime-400">x{odds.team1}</div>
+                                                    <p className="text-xs text-slate-400 mb-1">{m.p1_name || 'Player 1'}</p>
+                                                    <p className="text-xs text-slate-400 mb-2">{m.p2_name || 'Player 2'}</p>
+                                                    <div className="text-2xl font-black text-lime-400 animate-pulse">x{pool.team1_odds.toFixed(2)}</div>
                                                 </div>
 
                                                 <div className="text-center text-slate-600 font-bold text-xs">VS</div>
@@ -197,13 +326,12 @@ export default function BettingModal({ isOpen, onClose, myId }: Props) {
                                                 {/* Team 2 */}
                                                 <div
                                                     onClick={() => handleBet(m, 'TEAM_2')}
-                                                    className="flex-1 text-center bg-slate-700/30 hover:bg-rose-900/30 rounded-lg p-2 cursor-pointer transition-all active:scale-95 border border-transparent hover:border-rose-500/50"
+                                                    className="flex-1 text-center bg-slate-700/30 hover:bg-rose-900/30 rounded-lg p-3 cursor-pointer transition-all active:scale-95 border border-transparent hover:border-rose-500/50"
                                                 >
-                                                    <p className="text-xs text-slate-400 mb-1">{m.p3_name}</p>
-                                                    <p className="text-xs text-slate-400 mb-2">{m.p4_name}</p>
-                                                    <div className="text-xl font-black text-rose-400">x{odds.team2}</div>
+                                                    <p className="text-xs text-slate-400 mb-1">{m.p3_name || 'Player 3'}</p>
+                                                    <p className="text-xs text-slate-400 mb-2">{m.p4_name || 'Player 4'}</p>
+                                                    <div className="text-2xl font-black text-rose-400 animate-pulse">x{pool.team2_odds.toFixed(2)}</div>
                                                 </div>
-
                                             </div>
                                             {placing && <div className="absolute inset-0 bg-black/50 flex items-center justify-center text-yellow-400 font-bold">Processing...</div>}
                                         </div>
@@ -226,13 +354,13 @@ export default function BettingModal({ isOpen, onClose, myId }: Props) {
                                             </span>
                                             <span className="text-xs text-slate-400">{new Date(b.created_at).toLocaleDateString()}</span>
                                         </div>
-                                        <p className="text-sm font-bold text-white mt-1">{b.amount.toLocaleString()} P <span className="text-slate-500 text-xs">(@{b.odds_at_bet})</span></p>
+                                        <p className="text-sm font-bold text-white mt-1">{b.amount.toLocaleString()} P <span className="text-slate-500 text-xs">(@{b.odds_at_bet?.toFixed(2) || '?'})</span></p>
                                     </div>
                                     <div className="text-right">
-                                        {b.result === 'PENDING' && <span className="text-xs bg-slate-700 text-slate-300 px-2 py-1 rounded">진행중</span>}
-                                        {b.result === 'WIN' && <span className="text-xs bg-yellow-600 text-white px-2 py-1 rounded font-bold">WIN (+{Math.floor(b.amount * b.odds_at_bet).toLocaleString()})</span>}
-                                        {b.result === 'LOSE' && <span className="text-xs bg-slate-800 text-slate-600 border border-slate-700 px-2 py-1 rounded line-through">LOSE</span>}
-                                        {b.result === 'DRAW' && <span className="text-xs bg-slate-700 text-slate-200 px-2 py-1 rounded">DRAW (Refund)</span>}
+                                        {(b.result === 'OPEN' || b.result === 'LOCKED') && <span className="text-xs bg-slate-700 text-slate-300 px-2 py-1 rounded">진행중</span>}
+                                        {b.result === 'WON' && <span className="text-xs bg-yellow-600 text-white px-2 py-1 rounded font-bold">WIN (+{(b.payout_amount || 0).toLocaleString()})</span>}
+                                        {b.result === 'LOST' && <span className="text-xs bg-slate-800 text-slate-600 border border-slate-700 px-2 py-1 rounded line-through">LOSE</span>}
+                                        {b.result === 'DRAW' && <span className="text-xs bg-slate-700 text-slate-200 px-2 py-1 rounded">DRAW (환급)</span>}
                                     </div>
                                 </div>
                             ))}
