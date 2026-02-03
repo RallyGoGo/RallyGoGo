@@ -38,19 +38,36 @@ export default function Auth() {
         setErrorMsg(null);
 
         try {
+            // 🔍 DIAGNOSTIC: Log auth start
+            console.log('[Auth] Starting authentication process...');
+
+            // Helper function for timeout (supports Promise and PromiseLike)
+            const withTimeout = <T,>(promiseLike: PromiseLike<T>, ms: number = 15000): Promise<T> => {
+                const timeout = new Promise<never>((_, reject) =>
+                    setTimeout(() => reject(new Error('AUTH_TIMEOUT: 요청 시간이 초과되었습니다.')), ms)
+                );
+                return Promise.race([Promise.resolve(promiseLike), timeout]);
+            };
+
             if (isSignUp) {
                 // ★ [Guest→Member Conversion] 기존 게스트 프로필 검색
                 // 이름 기반으로 검색 (게스트 이름은 "홍길동 (G)" 형식)
                 const searchName = `${name.trim()} (G)`;
-                const { data: existingGuest } = await supabase
-                    .from('profiles')
-                    .select('*')
-                    .eq('name', searchName)
-                    .eq('is_guest', true)
-                    .maybeSingle();
+                console.log('[Auth] Checking for existing guest profile:', searchName);
+
+                const { data: existingGuest } = await withTimeout(
+                    supabase
+                        .from('profiles')
+                        .select('*')
+                        .eq('name', searchName)
+                        .eq('is_guest', true)
+                        .maybeSingle()
+                );
 
                 // 1. Auth 계정 생성
-                const { data, error } = await supabase.auth.signUp({ email, password });
+                console.log('[Auth] Creating auth account with email:', email);
+                const { data, error } = await withTimeout(supabase.auth.signUp({ email, password }));
+                console.log('[Auth] signUp response:', { data: data ? 'received' : 'null', error });
                 if (error) throw error;
 
                 if (data.user) {
@@ -100,7 +117,9 @@ export default function Auth() {
                     }
                 }
             } else {
-                const { error } = await supabase.auth.signInWithPassword({ email, password });
+                console.log('[Auth] Signing in with email:', email);
+                const { error } = await withTimeout(supabase.auth.signInWithPassword({ email, password }));
+                console.log('[Auth] signIn completed');
                 if (error) throw error;
             }
         } catch (error: unknown) {
