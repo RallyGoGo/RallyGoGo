@@ -194,8 +194,10 @@ export default function App() {
         }
 
         // Fetch profile if logged in
+        // CRITICAL: Use setTimeout to defer to next tick - avoids onAuthStateChange deadlock
+        // See: https://github.com/supabase/supabase-js/issues/1620
         if (newSession?.user?.id) {
-          await fetchProfile(newSession.user.id);
+          setTimeout(() => fetchProfile(newSession.user.id), 0);
         } else {
           setProfile(null);
         }
