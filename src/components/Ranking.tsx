@@ -12,7 +12,7 @@ type MatchRecord = Database['public']['Tables']['matches']['Row'] & {
     match_category: string;
 };
 
-type RankCategory = 'MEN_D' | 'WOMEN_D' | 'MIXED' | 'SINGLES';
+type RankCategory = 'MENS_DOUBLES' | 'WOMENS_DOUBLES' | 'MIXED' | 'SINGLES';
 
 // MVP 투표 태그 리스트
 const MVP_TAGS = [
@@ -25,7 +25,7 @@ const MVP_TAGS = [
 export default function Ranking({ user }: { user: User }) {
     // 상태 관리
     const [activeTab, setActiveTab] = useState<'RANKING' | 'HISTORY'>('RANKING');
-    const [rankCategory, setRankCategory] = useState<RankCategory>('MEN_D');
+    const [rankCategory, setRankCategory] = useState<RankCategory>('MENS_DOUBLES');
 
     const [rankings, setRankings] = useState<Profile[]>([]);
     const [history, setHistory] = useState<MatchRecord[]>([]);
@@ -48,7 +48,7 @@ export default function Ranking({ user }: { user: User }) {
             if (activeTab === 'RANKING') {
                 // V3: Column names with 's' (elo_mens_doubles, elo_womens_doubles)
                 let sortField: keyof Profile = 'elo_mens_doubles';
-                if (rankCategory === 'WOMEN_D') sortField = 'elo_womens_doubles';
+                if (rankCategory === 'WOMENS_DOUBLES') sortField = 'elo_womens_doubles';
                 if (rankCategory === 'MIXED') sortField = 'elo_mixed_doubles';
                 if (rankCategory === 'SINGLES') sortField = 'elo_singles';
 
@@ -61,8 +61,8 @@ export default function Ranking({ user }: { user: User }) {
                     .limit(50); // Hard limit for safety
 
                 // Gender filter (Server-side)
-                if (rankCategory === 'MEN_D') query = query.eq('gender', 'MALE');
-                if (rankCategory === 'WOMEN_D') query = query.eq('gender', 'FEMALE');
+                if (rankCategory === 'MENS_DOUBLES') query = query.eq('gender', 'MALE');
+                if (rankCategory === 'WOMENS_DOUBLES') query = query.eq('gender', 'FEMALE');
 
                 // Search filter (Server-side)
                 if (searchPlayer) query = query.ilike('name', `%${searchPlayer}%`);
@@ -128,8 +128,8 @@ export default function Ranking({ user }: { user: User }) {
 
     // 현재 카테고리에 맞는 점수 반환
     const getScore = (p: Profile) => {
-        if (rankCategory === 'MEN_D') return p.elo_mens_doubles || 0;
-        if (rankCategory === 'WOMEN_D') return p.elo_womens_doubles || 0;
+        if (rankCategory === 'MENS_DOUBLES') return p.elo_mens_doubles || 0;
+        if (rankCategory === 'WOMENS_DOUBLES') return p.elo_womens_doubles || 0;
         if (rankCategory === 'SINGLES') return p.elo_singles || 0;
         return p.elo_mixed_doubles || 0;
     };
@@ -203,9 +203,9 @@ export default function Ranking({ user }: { user: User }) {
                     <>
                         {/* 카테고리 선택 버튼 */}
                         <div className="flex gap-1 mb-4 bg-slate-900/50 p-1 rounded-lg inline-flex self-center">
-                            {['MEN_D', 'WOMEN_D', 'MIXED', 'SINGLES'].map(cat => (
+                            {['MENS_DOUBLES', 'WOMENS_DOUBLES', 'MIXED', 'SINGLES'].map(cat => (
                                 <button key={cat} onClick={() => setRankCategory(cat as RankCategory)} className={`px-2 py-1 text-[10px] rounded font-bold transition-all ${rankCategory === cat ? 'bg-slate-600 text-white shadow' : 'text-slate-400'}`}>
-                                    {cat === 'MEN_D' ? '남복' : cat === 'WOMEN_D' ? '여복' : cat === 'MIXED' ? '혼복' : '단식'}
+                                    {cat === 'MENS_DOUBLES' ? '남복' : cat === 'WOMENS_DOUBLES' ? '여복' : cat === 'MIXED' ? '혼복' : '단식'}
                                 </button>
                             ))}
                         </div>
@@ -225,7 +225,7 @@ export default function Ranking({ user }: { user: User }) {
                         ) : (
                             <div className="text-center py-10 text-slate-500">
                                 <p className="text-2xl mb-2">🍃</p>
-                                <p>{rankCategory === 'WOMEN_D' ? '여성 랭킹 데이터가 없습니다.' : '랭킹 데이터가 없습니다.'}</p>
+                                <p>{rankCategory === 'WOMENS_DOUBLES' ? '여성 랭킹 데이터가 없습니다.' : '랭킹 데이터가 없습니다.'}</p>
                             </div>
                         )}
 

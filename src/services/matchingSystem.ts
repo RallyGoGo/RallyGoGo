@@ -156,10 +156,10 @@ export const generateV83Match = (queue: QueueItem[]) => {
 
     if (women.length >= 4) {
         selected4 = women.slice(0, 4);
-        matchType = 'WOMEN_D';
+        matchType = 'WOMENS_DOUBLES';
     } else if (men.length >= 4) {
         selected4 = men.slice(0, 4);
-        matchType = 'MEN_D';
+        matchType = 'MENS_DOUBLES';
     } else {
         if (men.length >= 2 && women.length >= 2) {
             selected4 = [...men.slice(0, 2), ...women.slice(0, 2)];
@@ -228,8 +228,8 @@ export const generateV83Match = (queue: QueueItem[]) => {
 
 // ELO 가져오기 (매칭 타입별)
 const getElo = (p: QueueItem, type: string) => {
-    if (type === 'MEN_D') return p.profiles?.elo_mens_doubles || 1200;   // V3: men → mens
-    if (type === 'WOMEN_D') return p.profiles?.elo_womens_doubles || 1200; // V3: women → womens
+    if (type === 'MENS_DOUBLES') return p.profiles?.elo_mens_doubles || 1200;
+    if (type === 'WOMENS_DOUBLES') return p.profiles?.elo_womens_doubles || 1200;
     return p.profiles?.elo_mixed_doubles || 1200;
 };
 
