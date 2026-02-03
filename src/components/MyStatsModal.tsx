@@ -98,75 +98,85 @@ export default function MyStatsModal({ user, onClose, onUpdate }: Props) {
 
     const fetchMyData = useCallback(async () => {
         setLoading(true);
-        // 1. Load Profile (including stats columns)
-        const { data: profile } = await supabase.from('profiles').select('name, emoji, avatar_url, gender, elo_mens_doubles, elo_womens_doubles, elo_mixed_doubles, elo_singles, total_wins, total_losses, total_draws, winning_streak, role').eq('id', user.id).maybeSingle();
-        if (profile) {
-            setName(profile.name || '');
-            setSelectedEmoji(profile.emoji || '🎾');
-            setAvatarUrl(profile.avatar_url);
-            setMyProfile(profile as Profile);
+        try {
+            // 1. Load Profile (including stats columns)
+            const { data: profile, error: profileError } = await supabase.from('profiles').select('name, emoji, avatar_url, gender, elo_mens_doubles, elo_womens_doubles, elo_mixed_doubles, elo_singles, total_wins, total_losses, total_draws, winning_streak, role').eq('id', user.id).maybeSingle();
+
+            if (profileError) throw profileError;
+
+            if (profile) {
+                setName(profile.name || '');
+                setSelectedEmoji(profile.emoji || '🎾');
+                setAvatarUrl(profile.avatar_url);
+                setMyProfile(profile as Profile);
+            }
+
+            // 2. Analyze Matches
+            const { data: matches, error: matchError } = await supabase.from('matches')
+                .select('*').eq('status', 'FINISHED')
+                .or(`player_1.eq.${user.id},player_2.eq.${user.id},player_3.eq.${user.id},player_4.eq.${user.id}`);
+
+            if (matchError) throw matchError;
+
+            if (matches) {
+                const partnerStats: { [key: string]: number } = {};
+                let w = 0, l = 0;
+
+                matches.forEach((m) => {
+                    let myTeam = 0; let partnerId = '';
+                    if (m.player_1 === user.id) { myTeam = 1; partnerId = m.player_2 || ''; }
+                    else if (m.player_2 === user.id) { myTeam = 1; partnerId = m.player_1 || ''; }
+                    else if (m.player_3 === user.id) { myTeam = 2; partnerId = m.player_4 || ''; }
+                    else if (m.player_4 === user.id) { myTeam = 2; partnerId = m.player_3 || ''; }
+
+                    if (m.winner_team === 'DRAW') return;
+                    const iWon = (myTeam === 1 && m.winner_team === 'TEAM_1') || (myTeam === 2 && m.winner_team === 'TEAM_2');
+
+                    if (iWon) { w++; if (partnerId) partnerStats[partnerId] = (partnerStats[partnerId] || 0) + 1; }
+                    else { l++; }
+                });
+
+                // [Fix] Prefer DB-stored stats if available, fallback to calculated
+                const finalWins = profile?.total_wins ?? w;
+                const finalLosses = profile?.total_losses ?? l;
+                const finalDraws = profile?.total_draws ?? 0;
+                const totalGames = finalWins + finalLosses + finalDraws;
+                setTotalStats({ wins: finalWins, losses: finalLosses, draws: finalDraws, winRate: totalGames > 0 ? Math.round((finalWins / totalGames) * 100) : 0 });
+
+                const bestPid = Object.keys(partnerStats).reduce((a, b) => partnerStats[a] > partnerStats[b] ? a : b, '');
+                if (bestPid) { const { data } = await supabase.from('profiles').select('name').eq('id', bestPid).maybeSingle(); if (data) setBestPartner({ name: data.name || 'Unknown', wins: partnerStats[bestPid] }); }
+            }
+
+            // 3. [New] Load ELO History (Graph)
+            const { data: history } = await supabase.from('elo_history')
+                .select('new_rating')
+                .eq('player_id', user.id)
+                .order('created_at', { ascending: true }) // Oldest first
+                .limit(20); // Last 20 changes
+
+            if (history) {
+                setEloHistory(history.map((h) => h.new_rating));
+            }
+
+            // 4. [New] Load MVP Badges
+            const { data: votes } = await supabase.from('mvp_votes')
+                .select('tag')
+                .eq('target_id', user.id);
+
+            if (votes) {
+                const badgeCounts: { [key: string]: number } = {};
+                votes.forEach((v) => { if (v.tag) badgeCounts[v.tag] = (badgeCounts[v.tag] || 0) + 1; });
+                const sortedBadges = Object.entries(badgeCounts)
+                    .map(([tag, count]) => ({ tag, count }))
+                    .sort((a, b) => b.count - a.count);
+                setMvpBadges(sortedBadges);
+            }
+
+        } catch (error) {
+            console.error('Failed to load my stats:', error);
+        } finally {
+            setLoading(false);
         }
-
-        // 2. Analyze Matches
-        const { data: matches } = await supabase.from('matches')
-            .select('*').eq('status', 'FINISHED')
-            .or(`player_1.eq.${user.id},player_2.eq.${user.id},player_3.eq.${user.id},player_4.eq.${user.id}`);
-
-        if (matches) {
-            const partnerStats: { [key: string]: number } = {};
-            let w = 0, l = 0;
-
-            matches.forEach((m) => {
-                let myTeam = 0; let partnerId = '';
-                if (m.player_1 === user.id) { myTeam = 1; partnerId = m.player_2 || ''; }
-                else if (m.player_2 === user.id) { myTeam = 1; partnerId = m.player_1 || ''; }
-                else if (m.player_3 === user.id) { myTeam = 2; partnerId = m.player_4 || ''; }
-                else if (m.player_4 === user.id) { myTeam = 2; partnerId = m.player_3 || ''; }
-
-                if (m.winner_team === 'DRAW') return;
-                const iWon = (myTeam === 1 && m.winner_team === 'TEAM_1') || (myTeam === 2 && m.winner_team === 'TEAM_2');
-
-                if (iWon) { w++; if (partnerId) partnerStats[partnerId] = (partnerStats[partnerId] || 0) + 1; }
-                else { l++; }
-            });
-
-            // [Fix] Prefer DB-stored stats if available, fallback to calculated
-            const finalWins = profile?.total_wins ?? w;
-            const finalLosses = profile?.total_losses ?? l;
-            const finalDraws = profile?.total_draws ?? 0;
-            const totalGames = finalWins + finalLosses + finalDraws;
-            setTotalStats({ wins: finalWins, losses: finalLosses, draws: finalDraws, winRate: totalGames > 0 ? Math.round((finalWins / totalGames) * 100) : 0 });
-
-            const bestPid = Object.keys(partnerStats).reduce((a, b) => partnerStats[a] > partnerStats[b] ? a : b, '');
-            if (bestPid) { const { data } = await supabase.from('profiles').select('name').eq('id', bestPid).maybeSingle(); if (data) setBestPartner({ name: data.name || 'Unknown', wins: partnerStats[bestPid] }); }
-        }
-
-        // 3. [New] Load ELO History (Graph)
-        const { data: history } = await supabase.from('elo_history')
-            .select('new_rating')
-            .eq('player_id', user.id)
-            .order('created_at', { ascending: true }) // Oldest first
-            .limit(20); // Last 20 changes
-
-        if (history) {
-            setEloHistory(history.map((h) => h.new_rating));
-        }
-
-        // 4. [New] Load MVP Badges
-        const { data: votes } = await supabase.from('mvp_votes')
-            .select('tag')
-            .eq('target_id', user.id);
-
-        if (votes) {
-            const badgeCounts: { [key: string]: number } = {};
-            votes.forEach((v) => { if (v.tag) badgeCounts[v.tag] = (badgeCounts[v.tag] || 0) + 1; });
-            const sortedBadges = Object.entries(badgeCounts)
-                .map(([tag, count]) => ({ tag, count }))
-                .sort((a, b) => b.count - a.count);
-            setMvpBadges(sortedBadges);
-        }
-
-        setLoading(false);
     }, [user.id]);
 
     useEffect(() => {

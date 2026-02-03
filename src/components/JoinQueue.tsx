@@ -119,12 +119,29 @@ export default function JoinQueue({ user, profile }: JoinQueueProps) {
             // Convert HH:mm to ISO 8601 timestamp (TIMESTAMPTZ)
             const departureTimestamp = targetDate.toISOString();
 
-            // Call RPC
+            // 🔍 DIAGNOSTIC: Check Supabase client status
+            console.log('[JoinQueue] 🔍 Supabase client URL:', import.meta.env.VITE_SUPABASE_URL?.substring(0, 30) + '...');
+            console.log('[JoinQueue] 🔍 About to construct RPC promise...');
+
+            // Call RPC with 15s Timeout
             console.log('[JoinQueue] Calling join_queue RPC with timestamp:', departureTimestamp);
-            const { data, error } = await supabase.rpc('join_queue', {
+
+            const rpcPromise = supabase.rpc('join_queue', {
                 p_priority_score: calculatedScore,
                 p_departure_time: departureTimestamp
             });
+
+            console.log('[JoinQueue] 🔍 RPC promise constructed, starting race...');
+
+            const timeoutPromise = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('REQUEST_TIMEOUT')), 15000)
+            );
+
+            // Race RPC against timeout
+            console.log('[JoinQueue] 🔍 Awaiting Promise.race...');
+            const result = await Promise.race([rpcPromise, timeoutPromise]) as { data: unknown; error: unknown };
+            console.log('[JoinQueue] 🔍 Promise.race resolved!');
+            const { data, error } = result;
 
             // 🔍 DIAGNOSTIC: Log full response
             console.log('[JoinQueue] RPC Response:', { data, error });
@@ -143,6 +160,12 @@ export default function JoinQueue({ user, profile }: JoinQueueProps) {
                 was_duplicate?: boolean;
             };
             const response = data as JoinQueueResult | null;
+
+            if (!response) {
+                throw new Error('서버 응답 없음');
+            }
+
+            console.log('[JoinQueue] Parsed response:', response);
 
             if (!response) {
                 throw new Error('서버 응답 없음');

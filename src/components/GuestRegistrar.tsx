@@ -28,14 +28,25 @@ export default function GuestRegistrar({ onRegister, onClose }: GuestRegistrarPr
             depDate.setHours(h, m, 0, 0);
             if (depDate < now) depDate.setDate(depDate.getDate() + 1);
 
-            // RPC Call (Atomic Registration & Enqueue)
-            // Policies for ELO and Priority are handled entirely in the DB
-            const { data, error } = await supabase.rpc('register_guest_and_enqueue', {
+            console.log('[GuestRegistrar] Attempting registration for:', { name, ntrp, gender, departure: depDate.toISOString() });
+
+            // RPC Call (Atomic Registration & Enqueue) with 15s Timeout
+            const rpcPromise = supabase.rpc('register_guest_and_enqueue', {
                 p_name: name,
                 p_ntrp: parseFloat(ntrp),
                 p_gender: gender,
                 p_departure_time: depDate.toISOString()
             });
+
+            const timeoutPromise = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('REQUEST_TIMEOUT')), 15000)
+            );
+
+            // Race RPC against timeout
+            const result = await Promise.race([rpcPromise, timeoutPromise]) as { data: unknown; error: any };
+            const { data, error } = result;
+
+            console.log('[GuestRegistrar] RPC Response:', { data, error });
 
             if (error) throw error;
 
@@ -51,9 +62,15 @@ export default function GuestRegistrar({ onRegister, onClose }: GuestRegistrarPr
             onRegister(player_id);
             onClose();
 
-        } catch (err) {
-            console.error(err);
-            alert('등록 실패: 시스템 오류');
+        } catch (err: unknown) {
+            console.error('[GuestRegistrar] Failed:', err);
+            const msg = err instanceof Error ? err.message : 'Unknown Error';
+
+            if (msg === 'REQUEST_TIMEOUT') {
+                alert('⏳ 요청 시간이 초과되었습니다. 네트워크 상태를 확인하거나 잠시 후 다시 시도해주세요.');
+            } else {
+                alert(`등록 실패: ${msg}`);
+            }
         } finally {
             setLoading(false);
         }
