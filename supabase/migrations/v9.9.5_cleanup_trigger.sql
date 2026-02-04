@@ -1,0 +1,41 @@
+-- ============================================================================
+-- V9.9.5 CLEANUP - Remove duplicate trigger (RPC internal call suffices)
+-- Date: 2026-02-04
+-- ============================================================================
+-- RATIONALE:
+-- 1. finish_match_v2 already calls rejoin_queue_after_match internally (v9.9.4)
+-- 2. Trigger creates duplicate execution path (unnecessary resource usage)
+-- 3. Single execution path = simpler debugging, cleaner architecture
+--
+-- SAFETY:
+-- - rejoin_queue_after_match has ON CONFLICT DO NOTHING + ALREADY_IN_QUEUE guard
+-- - Even if trigger existed, no data corruption would occur
+-- - This is purely a cleanup for architectural clarity
+--
+-- ROLLBACK:
+-- - Re-run v9.9.2_fix_trigger.sql to restore trigger
+-- ============================================================================
+-- Remove trigger and its function
+DROP TRIGGER IF EXISTS trg_auto_rejoin_queue ON matches;
+DROP FUNCTION IF EXISTS trigger_auto_rejoin_queue();
+-- ============================================================================
+-- VERIFICATION
+-- ============================================================================
+-- After running, confirm with:
+--
+-- 1. Trigger should NOT exist:
+--    SELECT trigger_name FROM information_schema.triggers 
+--    WHERE trigger_name = 'trg_auto_rejoin_queue';
+--    Expected: 0 rows
+--
+-- 2. Function should NOT exist:
+--    SELECT proname FROM pg_proc WHERE proname = 'trigger_auto_rejoin_queue';
+--    Expected: 0 rows
+--
+-- 3. rejoin_queue_after_match SHOULD still exist:
+--    SELECT proname FROM pg_proc WHERE proname = 'rejoin_queue_after_match';
+--    Expected: 1 row
+--
+-- 4. Integration test:
+--    Create match → Enter score → Force confirm → Check queue
+-- ============================================================================
