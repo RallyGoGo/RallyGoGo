@@ -5,7 +5,9 @@
 -- ISSUE: Trigger not firing when finish_match_v2 is called from admin_confirm_match
 -- SOLUTION: Call rejoin_queue_after_match directly at the end of finish_match_v2
 -- ============================================================================
--- First, check current finish_match_v2 and modify it
+-- Drop existing function first (parameter names changed)
+DROP FUNCTION IF EXISTS finish_match_v2(UUID, INTEGER, INTEGER, TEXT);
+-- Recreate with embedded rejoin logic
 CREATE OR REPLACE FUNCTION finish_match_v2(
         p_match_id UUID,
         p_score_team1 INTEGER,
