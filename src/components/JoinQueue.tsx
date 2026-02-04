@@ -326,11 +326,13 @@ export default function JoinQueue({ user, profile }: JoinQueueProps) {
                     <div className="text-4xl mb-4">🎾</div>
                     <p className="text-white font-bold text-lg mb-1">현재 대기 중입니다</p>
                     <p className="text-lime-400 font-mono text-2xl font-black mb-2">
-                        {departureTime || '--:--'} 까지
+                        {myQueue.departure_time
+                            ? new Date(myQueue.departure_time).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false })
+                            : '--:--'} 까지
                     </p>
                     {myQueue.priority_score && (
                         <p className="text-sm text-yellow-400 mb-4">
-                            우선순위 점수: <span className="font-mono font-bold">{myQueue.priority_score}</span>
+                            우선순위 점수: <span className="font-mono font-bold">{Math.round(myQueue.priority_score)}</span>
                         </p>
                     )}
 

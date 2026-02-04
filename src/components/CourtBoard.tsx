@@ -81,10 +81,8 @@ export default function CourtBoard({ user }: { user: UserProp | null }) {
     const [activeMatches, setActiveMatches] = useState<EnrichedMatch[]>([]);
     const [loading, setLoading] = useState(false);
 
-    // Score & Tournament State
+    // Score State
     const [scores, setScores] = useState<{ [matchId: string]: { t1: string, t2: string } }>({});
-    const [isTournament, setIsTournament] = useState<{ [matchId: string]: boolean }>({});
-    const [tournamentCode, setTournamentCode] = useState<{ [matchId: string]: string }>({});
 
     // Modals
     const [isSwapModalOpen, setIsSwapModalOpen] = useState(false);
@@ -377,12 +375,7 @@ export default function CourtBoard({ user }: { user: UserProp | null }) {
     const handleSubmitScore = async (matchId: string) => {
         if (loading) return;
         const s = scores[matchId];
-        if (!s || !s.t1 || !s.t2) { alert("Scores required"); return; }
-
-        // Tournament Code Logic
-        if ((isTournament[matchId]) && tournamentCode[matchId] !== '7777') {
-            alert("⛔ Wrong Code!"); return;
-        }
+        if (!s || !s.t1 || !s.t2) { alert("점수를 입력해주세요"); return; }
 
         const s1 = parseInt(s.t1), s2 = parseInt(s.t2);
         const winner = s1 > s2 ? 'TEAM_1' : s2 > s1 ? 'TEAM_2' : 'DRAW';
@@ -568,41 +561,93 @@ export default function CourtBoard({ user }: { user: UserProp | null }) {
                             </div>
                         ) : match.status === 'SCORING' ? (
                             <div className="text-center w-full">
-                                <p className="text-xl font-bold text-cyan-400 mb-4">✍️ Enter Score</p>
-                                <div className="flex flex-col items-center justify-center mb-4 gap-2">
-                                    <label className="flex items-center gap-2 cursor-pointer bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-600 hover:border-amber-500 transition-colors">
-                                        <input type="checkbox" checked={isTournament[match.id] || false} onChange={() => setIsTournament({ ...isTournament, [match.id]: !isTournament[match.id] })} className="w-4 h-4 accent-amber-500" />
-                                        <span className={`text-sm font-bold ${isTournament[match.id] ? 'text-amber-400' : 'text-slate-400'}`}>🏆 Tournament</span>
-                                    </label>
-                                    {isTournament[match.id] && (<input type="password" maxLength={4} placeholder="PIN" value={tournamentCode[match.id] || ''} onChange={(e) => setTournamentCode({ ...tournamentCode, [match.id]: e.target.value })} className="w-24 bg-slate-900 border border-amber-500/50 text-center text-white rounded p-1 text-sm focus:outline-none" />)}
+                                <p className="text-xl font-bold text-cyan-400 mb-4">✍️ 점수 입력</p>
+
+                                {/* Team Labels + Score Inputs */}
+                                <div className="flex items-stretch justify-center gap-4 mb-6">
+                                    {/* Team 1 */}
+                                    <div className="flex-1 bg-lime-900/20 border border-lime-500/30 rounded-xl p-3">
+                                        <div className="text-lime-400 text-xs font-bold mb-2">🟢 Team 1</div>
+                                        <div className="text-white text-xs mb-2 truncate">{match.p1_name}</div>
+                                        <div className="text-white text-xs mb-3 truncate">{match.p2_name}</div>
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            max="99"
+                                            className="w-full h-12 bg-slate-800 border border-lime-500/50 rounded text-center text-2xl text-lime-400 font-bold focus:outline-none focus:border-lime-400"
+                                            value={scores[match.id]?.t1 || ''}
+                                            onChange={(e) => handleScoreChange(match.id, 't1', e.target.value)}
+                                        />
+                                    </div>
+
+                                    <div className="flex items-center">
+                                        <span className="text-slate-500 font-black text-2xl">:</span>
+                                    </div>
+
+                                    {/* Team 2 */}
+                                    <div className="flex-1 bg-rose-900/20 border border-rose-500/30 rounded-xl p-3">
+                                        <div className="text-rose-400 text-xs font-bold mb-2">🔴 Team 2</div>
+                                        <div className="text-white text-xs mb-2 truncate">{match.p3_name}</div>
+                                        <div className="text-white text-xs mb-3 truncate">{match.p4_name}</div>
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            max="99"
+                                            className="w-full h-12 bg-slate-800 border border-rose-500/50 rounded text-center text-2xl text-rose-400 font-bold focus:outline-none focus:border-rose-400"
+                                            value={scores[match.id]?.t2 || ''}
+                                            onChange={(e) => handleScoreChange(match.id, 't2', e.target.value)}
+                                        />
+                                    </div>
                                 </div>
-                                <div className="flex items-center justify-center gap-4 mb-6">
-                                    <input type="number" className="w-16 h-12 bg-slate-800 border border-slate-600 rounded text-center text-xl text-white font-bold" value={scores[match.id]?.t1 || ''} onChange={(e) => handleScoreChange(match.id, 't1', e.target.value)} />
-                                    <span className="text-slate-500 font-bold">:</span>
-                                    <input type="number" className="w-16 h-12 bg-slate-800 border border-slate-600 rounded text-center text-xl text-white font-bold" value={scores[match.id]?.t2 || ''} onChange={(e) => handleScoreChange(match.id, 't2', e.target.value)} />
-                                </div>
-                                <button onClick={() => handleSubmitScore(match.id)} disabled={loading} className="px-6 py-2 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-lg shadow-lg">Submit</button>
+
+                                <button onClick={() => handleSubmitScore(match.id)} disabled={loading} className="px-6 py-2 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-lg shadow-lg">제출</button>
                             </div>
                         ) : (
                             <div className="text-center w-full">
-                                <div className={`font-bold text-xl mb-4 ${match.status === 'PLAYING' ? 'text-lime-400 animate-pulse' : 'text-amber-400'}`}>{match.status === 'PLAYING' ? '🎾 In Progress' : '📋 Match Proposed'}</div>
-                                <div className="grid grid-cols-2 gap-3 w-full mb-6">
-                                    {[{ id: 'player_1', n: match.p1_name, uid: match.player_1 }, { id: 'player_2', n: match.p2_name, uid: match.player_2 }, { id: 'player_3', n: match.p3_name, uid: match.player_3 }, { id: 'player_4', n: match.p4_name, uid: match.player_4 }].map((p, i) => (
-                                        p.uid ? ( // Only render if uid exists (handle Singles gaps)
-                                            <div key={i} className="bg-slate-800 p-2 rounded border border-slate-600 flex items-center justify-between group relative">
-                                                <span className="text-xs text-white truncate max-w-[80px]">{p.n}</span>
-                                                <button onClick={() => openSwapModal(match.id, p.id, p.n, p.uid!)} className="text-[10px] bg-slate-600 hover:bg-amber-500 text-white px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-all absolute right-1">🔄</button>
-                                            </div>
-                                        ) : <div key={i} className="bg-transparent" />
-                                    ))}
+                                <div className={`font-bold text-xl mb-4 ${match.status === 'PLAYING' ? 'text-lime-400 animate-pulse' : 'text-amber-400'}`}>
+                                    {match.status === 'PLAYING' ? '🎾 경기 진행중' : '📋 매치 제안'}
                                 </div>
+
+                                {/* Team-based Layout */}
+                                <div className="flex gap-3 w-full mb-6">
+                                    {/* Team 1 */}
+                                    <div className="flex-1 bg-lime-900/20 border border-lime-500/40 rounded-xl p-3">
+                                        <div className="text-lime-400 text-xs font-bold mb-3">🟢 Team 1</div>
+                                        {[{ id: 'player_1', n: match.p1_name, uid: match.player_1 }, { id: 'player_2', n: match.p2_name, uid: match.player_2 }].map((p, i) => (
+                                            p.uid ? (
+                                                <div key={i} className="bg-slate-800 p-2 rounded border border-lime-500/30 mb-2 flex items-center justify-between group relative">
+                                                    <span className="text-sm text-white truncate">{p.n}</span>
+                                                    <button onClick={() => openSwapModal(match.id, p.id, p.n, p.uid!)} className="text-[10px] bg-slate-600 hover:bg-lime-500 text-white px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-all">🔄</button>
+                                                </div>
+                                            ) : null
+                                        ))}
+                                    </div>
+
+                                    <div className="flex items-center">
+                                        <span className="text-slate-500 font-black text-lg">VS</span>
+                                    </div>
+
+                                    {/* Team 2 */}
+                                    <div className="flex-1 bg-rose-900/20 border border-rose-500/40 rounded-xl p-3">
+                                        <div className="text-rose-400 text-xs font-bold mb-3">🔴 Team 2</div>
+                                        {[{ id: 'player_3', n: match.p3_name, uid: match.player_3 }, { id: 'player_4', n: match.p4_name, uid: match.player_4 }].map((p, i) => (
+                                            p.uid ? (
+                                                <div key={i} className="bg-slate-800 p-2 rounded border border-rose-500/30 mb-2 flex items-center justify-between group relative">
+                                                    <span className="text-sm text-white truncate">{p.n}</span>
+                                                    <button onClick={() => openSwapModal(match.id, p.id, p.n, p.uid!)} className="text-[10px] bg-slate-600 hover:bg-rose-500 text-white px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-all">🔄</button>
+                                                </div>
+                                            ) : null
+                                        ))}
+                                    </div>
+                                </div>
+
                                 {match.status === 'DRAFT' && (
                                     <div className="flex gap-3 w-full">
-                                        <button onClick={() => handleStartGame(match.id)} className="flex-[2] py-3 bg-lime-600 hover:bg-lime-500 text-white font-bold rounded-xl shadow-lg">▶️ Start Game</button>
-                                        <button onClick={() => handleCancelMatch(match.id)} className="flex-[1] py-3 bg-rose-700/80 hover:bg-rose-600 text-white font-bold rounded-xl shadow-lg border border-rose-500/30">🚫 Cancel</button>
+                                        <button onClick={() => handleStartGame(match.id)} className="flex-[2] py-3 bg-lime-600 hover:bg-lime-500 text-white font-bold rounded-xl shadow-lg">▶️ 게임 시작</button>
+                                        <button onClick={() => handleCancelMatch(match.id)} className="flex-[1] py-3 bg-rose-700/80 hover:bg-rose-600 text-white font-bold rounded-xl shadow-lg border border-rose-500/30">🚫 취소</button>
                                     </div>
                                 )}
-                                {match.status === 'PLAYING' && <button onClick={() => handleEndGame(match.id)} className="px-4 py-1 bg-rose-500/20 text-rose-400 text-xs rounded border border-rose-500/50 hover:bg-rose-500">⏹ End Game</button>}
+                                {match.status === 'PLAYING' && <button onClick={() => handleEndGame(match.id)} className="px-4 py-2 bg-rose-500/20 text-rose-400 text-sm font-bold rounded-lg border border-rose-500/50 hover:bg-rose-500 hover:text-white transition-all">⏹ 게임 종료</button>}
                             </div>
                         )}
                     </div>
@@ -659,8 +704,8 @@ export default function CourtBoard({ user }: { user: UserProp | null }) {
             )}
 
             {/* 🚑 DEBUG: Visual Version Tag */}
-            <div className="fixed bottom-2 right-2 bg-red-600 text-white text-xs px-2 py-1 rounded-full z-[9999] font-bold shadow-lg animate-pulse">
-                Ver 3.7 (RLS FIX)
+            <div className="fixed bottom-2 right-2 bg-lime-600 text-white text-xs px-2 py-1 rounded-full z-[9999] font-bold shadow-lg">
+                Ver 9.9.6 (UI FIX)
             </div>
         </div>
     );

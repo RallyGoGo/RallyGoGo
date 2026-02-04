@@ -357,10 +357,19 @@ export default function BettingModal({ isOpen, onClose, myId }: Props) {
                                         <p className="text-sm font-bold text-white mt-1">{b.amount.toLocaleString()} P <span className="text-slate-500 text-xs">(@{b.odds_at_bet?.toFixed(2) || '?'})</span></p>
                                     </div>
                                     <div className="text-right">
-                                        {(b.result === 'OPEN' || b.result === 'LOCKED') && <span className="text-xs bg-slate-700 text-slate-300 px-2 py-1 rounded">진행중</span>}
-                                        {b.result === 'WON' && <span className="text-xs bg-yellow-600 text-white px-2 py-1 rounded font-bold">WIN (+{(b.payout_amount || 0).toLocaleString()})</span>}
-                                        {b.result === 'LOST' && <span className="text-xs bg-slate-800 text-slate-600 border border-slate-700 px-2 py-1 rounded line-through">LOSE</span>}
-                                        {b.result === 'DRAW' && <span className="text-xs bg-slate-700 text-slate-200 px-2 py-1 rounded">DRAW (환급)</span>}
+                                        {(b.result === 'OPEN' || b.result === 'LOCKED') && <span className="text-xs bg-amber-700/50 text-amber-300 px-2 py-1 rounded animate-pulse">⏳ 진행중</span>}
+                                        {b.result === 'WON' && (
+                                            <div className="flex flex-col items-end gap-0.5">
+                                                <span className="text-xs bg-yellow-500 text-slate-900 px-2 py-1 rounded font-black">
+                                                    🏆 WIN
+                                                </span>
+                                                <span className="text-[10px] text-lime-400 font-bold">
+                                                    +{((b.payout_amount || 0) - b.amount).toLocaleString()}P 순이익
+                                                </span>
+                                            </div>
+                                        )}
+                                        {b.result === 'LOST' && <span className="text-xs bg-slate-800 text-slate-500 border border-slate-700 px-2 py-1 rounded">💔 LOSE</span>}
+                                        {b.result === 'DRAW' && <span className="text-xs bg-slate-600 text-slate-200 px-2 py-1 rounded">🤝 DRAW (환급)</span>}
                                     </div>
                                 </div>
                             ))}
