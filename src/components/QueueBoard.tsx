@@ -93,18 +93,27 @@ export default function QueueBoard({ user }: { user: User }) {
         const exitCandidates = currentQueue.filter(item => {
             if (!item.departure_time) return false;
 
-            const [targetH, targetM] = item.departure_time.split(':').map(Number);
-            const targetDate = new Date();
-            targetDate.setHours(targetH, targetM, 0, 0);
+            let targetDate: Date;
 
-            // 날짜 경계 처리 로직 (새벽반 고려)
-            // 예: 현재 23시, 갈시간 01시 -> 내일 01시 (아직 안 지남)
-            // 예: 현재 01시, 갈시간 23시 -> 어제 23시 (이미 지남)
+            // Handle both ISO timestamp (from DB) and HH:MM format (from UI)
+            if (item.departure_time.includes('T') || item.departure_time.includes('-')) {
+                // ISO format: "2026-02-04T21:30:00+00:00" or "2026-02-04 21:30:00+00"
+                targetDate = new Date(item.departure_time);
+            } else if (item.departure_time.includes(':')) {
+                // HH:MM format: "21:30"
+                const [targetH, targetM] = item.departure_time.split(':').map(Number);
+                targetDate = new Date();
+                targetDate.setHours(targetH, targetM, 0, 0);
 
-            if (targetH < currentTime.getHours() && (currentTime.getHours() - targetH) > 12) {
-                targetDate.setDate(targetDate.getDate() + 1);
-            } else if (targetH > currentTime.getHours() && (targetH - currentTime.getHours()) > 12) {
-                targetDate.setDate(targetDate.getDate() - 1);
+                // 날짜 경계 처리 로직 (새벽반 고려)
+                if (targetH < currentTime.getHours() && (currentTime.getHours() - targetH) > 12) {
+                    targetDate.setDate(targetDate.getDate() + 1);
+                } else if (targetH > currentTime.getHours() && (targetH - currentTime.getHours()) > 12) {
+                    targetDate.setDate(targetDate.getDate() - 1);
+                }
+            } else {
+                // Unknown format, skip
+                return false;
             }
 
             // 현재 시간이 타겟 시간보다 크면(지났으면) 퇴장 대상
