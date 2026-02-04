@@ -53,6 +53,14 @@ export default function MatchReviewModal({ match, user, onClose, onSuccess }: Pr
         if (!selectedMvp || !selectedTag) return alert("Please select an MVP and a Reason!");
         setLoading(true);
 
+        console.log('[MatchReviewModal] handleSubmit starting:', {
+            matchId: match.id,
+            score_team1: match.score_team1,
+            score_team2: match.score_team2,
+            match_type: match.match_type,
+            status: match.status
+        });
+
         try {
             // 1. Submit Vote
             const { error: voteError } = await supabase.from('mvp_votes').insert({
@@ -65,6 +73,7 @@ export default function MatchReviewModal({ match, user, onClose, onSuccess }: Pr
             if (voteError && voteError.code !== '23505') throw voteError; // Ignore unique constraint violation (already voted)
 
             // 2. Confirm Match via RPC
+            console.log('[MatchReviewModal] Calling finish_match_v2...');
             const { data, error } = await supabase.rpc('finish_match_v2', {
                 p_match_id: match.id,
                 p_team1_score: match.score_team1 || 0,
@@ -72,13 +81,30 @@ export default function MatchReviewModal({ match, user, onClose, onSuccess }: Pr
                 p_confirmation_type: 'NORMAL_CONFIRM'
             });
 
-            if (error) throw error;
+            console.log('[MatchReviewModal] finish_match_v2 FULL RESPONSE:', { data, error });
+
+            if (error) {
+                console.error('[MatchReviewModal] Supabase ERROR:', error);
+                throw error;
+            }
 
             // Check for logical RPC error but ignore ALREADY_FINISHED
-            if (!isRpcSuccess(data)) {
-                const rpcErr = (data as { error?: string })?.error;
+            type RpcResponse = { success?: boolean; error?: string; message?: string; bets_settled?: number; match_type?: string; sqlstate?: string };
+            const rpcData = data as RpcResponse;
+
+            console.log('[MatchReviewModal] Parsed response:', {
+                success: rpcData?.success,
+                error: rpcData?.error,
+                bets_settled: rpcData?.bets_settled,
+                match_type: rpcData?.match_type,
+                sqlstate: rpcData?.sqlstate,
+                message: rpcData?.message
+            });
+
+            if (!rpcData?.success) {
+                const rpcErr = rpcData?.error;
                 if (rpcErr && rpcErr !== 'ALREADY_FINISHED') {
-                    throw new Error(rpcErr || 'RPC Failed');
+                    throw new Error(rpcErr + (rpcData?.message ? ': ' + rpcData.message : ''));
                 }
             }
 
@@ -87,7 +113,7 @@ export default function MatchReviewModal({ match, user, onClose, onSuccess }: Pr
             onClose();
 
         } catch (e: unknown) {
-            console.error(e);
+            console.error('[MatchReviewModal] CATCH:', e);
             const msg = e instanceof Error ? e.message : 'Unknown error';
             if (msg.includes("Match already finished")) {
                 alert("⚠️ Match was already confirmed!");

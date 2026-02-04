@@ -387,6 +387,8 @@ export default function CourtBoard({ user }: { user: UserProp | null }) {
         const s1 = parseInt(s.t1), s2 = parseInt(s.t2);
         const winner = s1 > s2 ? 'TEAM_1' : s2 > s1 ? 'TEAM_2' : 'DRAW';
 
+        console.log('[CourtBoard] handleReportScore starting:', { matchId, s1, s2, winner });
+
         setLoading(true);
         try {
             // V9.7.2: Strict RPC Model - report_score with correct params
@@ -396,6 +398,9 @@ export default function CourtBoard({ user }: { user: UserProp | null }) {
                 p_team2_score: s2,
                 p_winner: winner
             });
+
+            console.log('[CourtBoard] report_score RESPONSE:', { data, error });
+
             const rpcErr = getRpcError(data);
             if (error || rpcErr) throw new Error(error?.message || rpcErr || 'Unknown error');
 
@@ -403,7 +408,10 @@ export default function CourtBoard({ user }: { user: UserProp | null }) {
             // Service call removed - RPC handles everything
             alert("✅ Reported! Waiting for confirmation.");
             fetchMatches();
-        } catch (e: Error | unknown) { alert(e instanceof Error ? e.message : 'Unknown error'); }
+        } catch (e: Error | unknown) {
+            console.error('[CourtBoard] handleReportScore ERROR:', e);
+            alert(e instanceof Error ? e.message : 'Unknown error');
+        }
         setLoading(false);
     };
 
@@ -415,6 +423,14 @@ export default function CourtBoard({ user }: { user: UserProp | null }) {
         const match = activeMatches.find(m => m.id === matchId);
         if (!match) return;
 
+        console.log('[CourtBoard] handleConfirmMatch starting:', {
+            matchId,
+            score_team1: match.score_team1,
+            score_team2: match.score_team2,
+            match_type: match.match_type,
+            status: match.status
+        });
+
         setLoading(true);
         try {
             const { data, error } = await supabase.rpc('finish_match_v2', {
@@ -424,20 +440,36 @@ export default function CourtBoard({ user }: { user: UserProp | null }) {
                 p_confirmation_type: 'NORMAL_CONFIRM'
             });
 
-            if (error) throw error;
+            console.log('[CourtBoard] finish_match_v2 FULL RESPONSE:', { data, error });
+
+            if (error) {
+                console.error('[CourtBoard] finish_match_v2 Supabase ERROR:', error);
+                throw error;
+            }
 
             // Check for logical error in JSON response
-            type RpcError = { error?: string };
-            if (data && typeof data === 'object' && 'error' in data) {
-                const rpcData = data as RpcError;
+            type RpcResponse = { success?: boolean; error?: string; message?: string; bets_settled?: number; match_type?: string; sqlstate?: string };
+            const rpcData = data as RpcResponse;
+
+            console.log('[CourtBoard] finish_match_v2 parsed response:', {
+                success: rpcData?.success,
+                error: rpcData?.error,
+                bets_settled: rpcData?.bets_settled,
+                match_type: rpcData?.match_type,
+                sqlstate: rpcData?.sqlstate,
+                message: rpcData?.message
+            });
+
+            if (rpcData && !rpcData.success) {
                 if (rpcData.error && rpcData.error !== 'ALREADY_FINISHED') {
-                    throw new Error(rpcData.error);
+                    throw new Error(rpcData.error + (rpcData.message ? ': ' + rpcData.message : ''));
                 }
             }
 
             alert("🎉 Match Confirmed! ELO updated.");
             fetchMatches();
         } catch (e: unknown) {
+            console.error('[CourtBoard] handleConfirmMatch CATCH:', e);
             const msg = e instanceof Error ? e.message : 'Confirm failed';
             alert(msg);
         }
