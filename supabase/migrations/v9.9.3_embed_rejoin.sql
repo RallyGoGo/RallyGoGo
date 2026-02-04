@@ -60,8 +60,8 @@ SELECT id,
         CASE
             v_match.match_type
             WHEN 'MIXED' THEN elo_mixed_doubles
-            WHEN 'MENS' THEN elo_mens_doubles
-            WHEN 'WOMENS' THEN elo_womens_doubles
+            WHEN 'MENS_DOUBLES' THEN elo_mens_doubles
+            WHEN 'WOMENS_DOUBLES' THEN elo_womens_doubles
             ELSE elo_mixed_doubles
         END,
         1500
@@ -85,11 +85,11 @@ CASE
     UPDATE profiles
     SET elo_mixed_doubles = v_new_elo
     WHERE id = v_elo_calc.id;
-WHEN 'MENS' THEN
+WHEN 'MENS_DOUBLES' THEN
 UPDATE profiles
 SET elo_mens_doubles = v_new_elo
 WHERE id = v_elo_calc.id;
-WHEN 'WOMENS' THEN
+WHEN 'WOMENS_DOUBLES' THEN
 UPDATE profiles
 SET elo_womens_doubles = v_new_elo
 WHERE id = v_elo_calc.id;
