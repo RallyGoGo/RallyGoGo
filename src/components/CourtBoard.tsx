@@ -96,33 +96,78 @@ export default function CourtBoard({ user }: { user: UserProp | null }) {
     // [New] Match Review Modal State
     const [matchReviewTarget, setMatchReviewTarget] = useState<EnrichedMatch | null>(null);
 
-    // [New] Notification Banner Logic
-    // Find SCORING matches involving user that are NOT on any court (Instant Released)
-    // V3: Uses SCORING status instead of PENDING
-    const pendingReviewMatch = useMemo(() => user ? activeMatches.find(m =>
-        m.status === 'SCORING' &&
-        m.court_name === null &&
-        ([m.player_1, m.player_2, m.player_3, m.player_4].includes(user.id) || matchReviewTarget?.id === m.id)
-    ) : null, [user, activeMatches, matchReviewTarget]);
+    // [New] PENDING matches for notification (separate state)
+    const [pendingMatches, setPendingMatches] = useState<EnrichedMatch[]>([]);
+
+    // [New] Notification Banner Logic - Show PENDING matches requiring confirmation
+    const pendingReviewMatch = useMemo(() => user ? pendingMatches.find(m =>
+        m.status === 'PENDING' &&
+        ([m.player_1, m.player_2, m.player_3, m.player_4].includes(user.id))
+    ) : null, [user, pendingMatches]);
 
     // Check if I am the opponent (needs to confirm) or reporter (waiting)
-    const isPendingOpponent = pendingReviewMatch && pendingReviewMatch.reported_by !== user.id;
+    const isPendingOpponent = pendingReviewMatch && user && pendingReviewMatch.reported_by !== user.id;
+
+    // Fetch PENDING matches for notification banner
+    const fetchPendingMatches = async () => {
+        // Note: PENDING status may not be in TypeScript types, use 'as' workaround
+        const { data } = await supabase
+            .from('matches')
+            .select('*')
+            .eq('status', 'PENDING' as 'DRAFT'); // TypeScript workaround for PENDING enum
+
+        if (data && data.length > 0) {
+            // Get player names
+            const allPlayerIds = new Set<string>();
+            data.forEach((m) => {
+                if (m.player_1) allPlayerIds.add(m.player_1);
+                if (m.player_2) allPlayerIds.add(m.player_2);
+                if (m.player_3) allPlayerIds.add(m.player_3);
+                if (m.player_4) allPlayerIds.add(m.player_4);
+            });
+
+            const { data: profiles } = await supabase
+                .from('profiles')
+                .select('*')
+                .in('id', Array.from(allPlayerIds));
+
+            const profileMap = new Map((profiles || []).map((p) => [p.id, p.name]));
+
+            const enriched = data.map((m) => ({
+                ...m,
+                p1_name: (m.player_1 ? profileMap.get(m.player_1) : '') || 'Unknown',
+                p2_name: (m.player_2 ? profileMap.get(m.player_2) : '') || 'Unknown',
+                p3_name: (m.player_3 ? profileMap.get(m.player_3) : '') || 'Unknown',
+                p4_name: (m.player_4 ? profileMap.get(m.player_4) : '') || 'Unknown',
+            })) as unknown as EnrichedMatch[];
+
+            setPendingMatches(enriched);
+        } else {
+            setPendingMatches([]);
+        }
+    };
 
     useEffect(() => {
         fetchMatches();
+        fetchPendingMatches();
         const channel = supabase.channel('public:matches')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, () => { fetchMatches(); })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, () => {
+                fetchMatches();
+                fetchPendingMatches();
+            })
             .subscribe();
         return () => { supabase.removeChannel(channel); };
     }, []);
 
+
     // --- DATA FETCHING (SAFE 406 PREVENTION) ---
+    // V9.9.6: Exclude PENDING matches - court is released once score is submitted
     const fetchMatches = async () => {
         // Explicitly cast or allow inference if supabase client is typed (which we will verify next)
         const { data } = await supabase
             .from('matches')
             .select('*')
-            .neq('status', 'FINISHED');
+            .in('status', ['DRAFT', 'PLAYING', 'SCORING']); // Only show matches that are actively using the court
 
         const matchData = data as EnrichedMatch[] | null;
 
@@ -705,7 +750,7 @@ export default function CourtBoard({ user }: { user: UserProp | null }) {
 
             {/* 🚑 DEBUG: Visual Version Tag */}
             <div className="fixed bottom-2 right-2 bg-lime-600 text-white text-xs px-2 py-1 rounded-full z-[9999] font-bold shadow-lg">
-                Ver 9.9.6 (UI FIX)
+                Ver 9.9.7 (COURT RELEASE)
             </div>
         </div>
     );
