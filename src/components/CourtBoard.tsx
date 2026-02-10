@@ -31,12 +31,15 @@ interface CourtBoardProps {
 
 export default function CourtBoard({ user, matches, queue }: CourtBoardProps) {
     // V3: Matches and Queue are now passed as props from useRallyData (Centralized)
-    const { activeMatches, queueCandidates } = useMemo(() => {
-        // Filter matches for this component (DRAFT, PLAYING, SCORING)
-        // PENDING matches are handled by the parent or a separate notification component if needed, 
-        // but CourtBoard also displays them if they are on a court.
-        const filteredMatches = matches.filter(m =>
-            ['DRAFT', 'PLAYING', 'SCORING', 'PENDING'].includes(m.status || '')
+    const { activeMatches, pendingMatches, queueCandidates } = useMemo(() => {
+        // Filter matches for Courts (DRAFT, PLAYING, SCORING) - EXCLUDE PENDING so court is free
+        const courtMatches = matches.filter(m =>
+            ['DRAFT', 'PLAYING', 'SCORING'].includes(m.status || '')
+        ) as AppMatch[];
+
+        // Filter PENDING matches separately (for Banner / Notification)
+        const pendingList = matches.filter(m =>
+            m.status === 'PENDING'
         ) as AppMatch[];
 
         // Process Queue Data for UI
@@ -56,7 +59,7 @@ export default function CourtBoard({ user, matches, queue }: CourtBoardProps) {
 
         const sortedQueue = scoredQueue.sort((a, b) => (b.finalScore || 0) - (a.finalScore || 0)) as AppQueueItem[];
 
-        return { activeMatches: filteredMatches, queueCandidates: sortedQueue };
+        return { activeMatches: courtMatches, pendingMatches: pendingList, queueCandidates: sortedQueue };
     }, [matches, queue]);
 
     // Local state for UI only
@@ -81,10 +84,9 @@ export default function CourtBoard({ user, matches, queue }: CourtBoardProps) {
     };
 
     // [New] PENDING matches for notification (derived from props)
-    const pendingReviewMatch = useMemo(() => user ? activeMatches.find(m =>
-        m.status === 'PENDING' &&
+    const pendingReviewMatch = useMemo(() => user ? pendingMatches.find(m =>
         ([m.player_1, m.player_2, m.player_3, m.player_4].includes(user.id))
-    ) : null, [user, activeMatches]);
+    ) : null, [user, pendingMatches]);
 
     // Check if I am the opponent (needs to confirm) or reporter (waiting)
     const isPendingOpponent = pendingReviewMatch && user && pendingReviewMatch.reported_by !== user.id;
@@ -603,10 +605,7 @@ export default function CourtBoard({ user, matches, queue }: CourtBoardProps) {
                 />
             )}
 
-            {/* 🚑 DEBUG: Visual Version Tag */}
-            <div className="fixed bottom-2 right-2 bg-lime-600 text-white text-xs px-2 py-1 rounded-full z-[9999] font-bold shadow-lg">
-                Ver 9.9.7 (COURT RELEASE)
-            </div>
+
         </div>
     );
 }
