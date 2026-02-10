@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { logger } from '../utils/logger';
 import { initialEloFromNtrp, NTRP_OPTIONS } from '../utils/ratingPolicy'; // Display Only
 
 interface GuestRegistrarProps {
@@ -28,7 +29,7 @@ export default function GuestRegistrar({ onRegister, onClose }: GuestRegistrarPr
             depDate.setHours(h, m, 0, 0);
             if (depDate < now) depDate.setDate(depDate.getDate() + 1);
 
-            console.log('[GuestRegistrar] Attempting registration for:', { name, ntrp, gender, departure: depDate.toISOString() });
+            logger.info('guest.register_attempt', { name, ntrp, gender, departure: depDate.toISOString() });
 
             // RPC Call (Atomic Registration & Enqueue) with 15s Timeout
             const rpcPromise = supabase.rpc('register_guest_and_enqueue', {
@@ -46,7 +47,7 @@ export default function GuestRegistrar({ onRegister, onClose }: GuestRegistrarPr
             const result = await Promise.race([rpcPromise, timeoutPromise]) as { data: unknown; error: any };
             const { data, error } = result;
 
-            console.log('[GuestRegistrar] RPC Response:', { data, error });
+            logger.info('guest.register_response', { data, hasError: !!error });
 
             if (error) throw error;
 
@@ -63,7 +64,7 @@ export default function GuestRegistrar({ onRegister, onClose }: GuestRegistrarPr
             onClose();
 
         } catch (err: unknown) {
-            console.error('[GuestRegistrar] Failed:', err);
+            logger.error('guest.register_fail', err);
             const msg = err instanceof Error ? err.message : 'Unknown Error';
 
             if (msg === 'REQUEST_TIMEOUT') {

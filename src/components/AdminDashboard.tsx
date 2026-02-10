@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase, isRpcSuccess } from '../lib/supabase';
+import { supabase, isRpcSuccess, type RpcResponse } from '../lib/supabase';
 import { Database } from '../types/database.types';
 
 // Type aliases from database.types.ts
@@ -81,7 +81,7 @@ export default function AdminBoard({ onClose }: Props) {
                 p1_name: pNames?.find((p: NameRow) => p.id === m.player_1)?.name || '?', p2_name: pNames?.find((p: NameRow) => p.id === m.player_2)?.name || '?',
                 p3_name: pNames?.find((p: NameRow) => p.id === m.player_3)?.name || '?', p4_name: pNames?.find((p: NameRow) => p.id === m.player_4)?.name || '?',
             }));
-            setMatches(enriched);
+            setMatches(enriched as Match[]);
         }
         setLoading(false);
     };
@@ -101,7 +101,7 @@ export default function AdminBoard({ onClose }: Props) {
             p_role: editForm.role || undefined
         });
         if (error) { alert(error.message); return; }
-        if (!isRpcSuccess(data)) { alert(`Error: ${(data as { error?: string })?.error || 'Unknown error'}`); return; }
+        if (!isRpcSuccess(data as RpcResponse)) { alert(`Error: ${(data as { error?: string })?.error || 'Unknown error'}`); return; }
         setEditingId(null);
         fetchProfiles();
     };
@@ -110,15 +110,15 @@ export default function AdminBoard({ onClose }: Props) {
         if (!confirm("⚠️ 대기열을 초기화하시겠습니까? (모든 대기자 삭제)")) return;
         const { data, error } = await supabase.rpc('admin_clear_queue');
         if (error) { alert(error.message); return; }
-        if (isRpcSuccess(data)) {
+        if (isRpcSuccess(data as RpcResponse)) {
             alert(`Queue Cleared! (${(data as { deleted_count?: number })?.deleted_count || 0} entries deleted)`);
         } else {
             alert(`Error: ${(data as { error?: string })?.error || 'Unknown error'}`);
         }
     };
 
-    const addNotice = async () => { if (!newNotice.trim()) return; await supabase.from('notices').insert({ content: newNotice, is_active: true }); setNewNotice(''); fetchNotices(); };
-    const deleteNotice = async (id: string) => { if (!confirm("Delete this notice?")) return; await supabase.from('notices').delete().eq('id', id); fetchNotices(); };
+    const addNotice = async () => { if (!newNotice.trim()) return; await supabase.rpc('admin_add_notice', { p_content: newNotice }); setNewNotice(''); fetchNotices(); };
+    const deleteNotice = async (id: string) => { if (!confirm("Delete this notice?")) return; await supabase.rpc('admin_delete_notice', { p_notice_id: id }); fetchNotices(); };
 
     // ✅ [Phase 4E] Admin Confirm Match via RPC
     const adminConfirmMatch = async (matchId: string) => {
@@ -127,7 +127,7 @@ export default function AdminBoard({ onClose }: Props) {
         try {
             const { data, error } = await supabase.rpc('admin_confirm_match', { p_match_id: matchId });
             if (error) throw error;
-            if (!isRpcSuccess(data)) throw new Error((data as { error?: string })?.error || 'RPC failed');
+            if (!isRpcSuccess(data as RpcResponse)) throw new Error((data as { error?: string })?.error || 'RPC failed');
             alert("✅ 관리자 승인 완료!");
             fetchMatches();
         } catch (e) {
@@ -154,7 +154,7 @@ export default function AdminBoard({ onClose }: Props) {
                 p_reason: reason
             });
             if (error) throw error;
-            if (!isRpcSuccess(data)) throw new Error((data as { error?: string })?.error || 'RPC failed');
+            if (!isRpcSuccess(data as RpcResponse)) throw new Error((data as { error?: string })?.error || 'RPC failed');
 
             const affectedPlayers = (data as { affected_players?: number })?.affected_players || 0;
             alert(isScoring ? "🚫 승인 거절됨 (기록 삭제)" : `✅ 롤백 완료 (${affectedPlayers} players affected)`);
@@ -179,7 +179,7 @@ export default function AdminBoard({ onClose }: Props) {
         try {
             const { data, error } = await supabase.rpc('admin_season_soft_reset');
             if (error) throw error;
-            if (!isRpcSuccess(data)) throw new Error((data as { error?: string })?.error || 'RPC failed');
+            if (!isRpcSuccess(data as RpcResponse)) throw new Error((data as { error?: string })?.error || 'RPC failed');
 
             const affectedProfiles = (data as { affected_profiles?: number })?.affected_profiles || 0;
             alert(`✅ 시즌 소프트 리셋 완료! (${affectedProfiles} profiles updated)`);
@@ -378,22 +378,22 @@ export default function AdminBoard({ onClose }: Props) {
                                                     </td>
                                                     <td className="p-4">
                                                         {editingId === p.id ? (
-                                                            <select className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white" value={editForm.gender} onChange={e => setEditForm({ ...editForm, gender: e.target.value })}>
-                                                                <option value="Male">남</option><option value="Female">여</option>
+                                                            <select className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white" value={editForm.gender ?? ''} onChange={e => setEditForm({ ...editForm, gender: e.target.value as 'MALE' | 'FEMALE' | 'OTHER' })}>
+                                                                <option value="MALE">남</option><option value="FEMALE">여</option>
                                                             </select>
-                                                        ) : <span className={`text-xs px-2 py-1 rounded ${p.gender === 'Male' ? 'bg-blue-900/50 text-blue-300' : 'bg-rose-900/50 text-rose-300'}`}>{p.gender}</span>}
+                                                        ) : <span className={`text-xs px-2 py-1 rounded ${p.gender === 'MALE' ? 'bg-blue-900/50 text-blue-300' : 'bg-rose-900/50 text-rose-300'}`}>{p.gender === 'MALE' ? '남' : '여'}</span>}
                                                     </td>
                                                     <td className="p-4">
                                                         {editingId === p.id ? (
-                                                            <input type="number" step="0.5" className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white w-16" value={editForm.ntrp} onChange={e => setEditForm({ ...editForm, ntrp: parseFloat(e.target.value) })} />
+                                                            <input type="number" step="0.5" className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white w-16" value={editForm.ntrp ?? ''} onChange={e => setEditForm({ ...editForm, ntrp: parseFloat(e.target.value) })} />
                                                         ) : <span className="font-mono text-slate-400">{p.ntrp}</span>}
                                                     </td>
                                                     <td className="p-4">
                                                         {editingId === p.id ? (
                                                             <select
                                                                 className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white text-xs"
-                                                                value={editForm.role}
-                                                                onChange={e => setEditForm({ ...editForm, role: e.target.value })}
+                                                                value={editForm.role ?? ''}
+                                                                onChange={e => setEditForm({ ...editForm, role: e.target.value as 'admin' | 'player' | 'coach' })}
                                                             >
                                                                 <option value="member">Member</option>
                                                                 <option value="coach">Coach</option>
@@ -443,7 +443,7 @@ export default function AdminBoard({ onClose }: Props) {
                                     <div key={n.id} className="bg-slate-800 p-4 rounded-xl border border-slate-700 flex justify-between items-center group hover:border-slate-500 transition-all">
                                         <div>
                                             <p className="text-white font-medium">{n.content}</p>
-                                            <p className="text-xs text-slate-500 mt-1">{new Date(n.created_at).toLocaleDateString()}</p>
+                                            <p className="text-xs text-slate-500 mt-1">{n.created_at ? new Date(n.created_at).toLocaleDateString() : '-'}</p>
                                         </div>
                                         <button onClick={() => deleteNotice(n.id)} className="text-slate-500 hover:text-rose-500 p-2 opacity-50 group-hover:opacity-100 transition-all">🗑️</button>
                                     </div>
@@ -478,8 +478,8 @@ export default function AdminBoard({ onClose }: Props) {
                                     {/* 액션 버튼 그룹 */}
                                     <div className="flex items-center gap-2 w-full md:w-auto justify-end">
                                         <div className="text-right hidden md:block mr-2">
-                                            <p className="text-xs font-bold text-slate-500 uppercase">{m.match_category}</p>
-                                            <p className="text-xs text-slate-600">{new Date(m.end_time).toLocaleDateString()}</p>
+                                            <p className="text-xs font-bold text-slate-500 uppercase">{m.match_type}</p>
+                                            <p className="text-xs text-slate-600">{m.end_time ? new Date(m.end_time).toLocaleDateString() : '-'}</p>
                                         </div>
 
                                         {m.status === 'SCORING' || m.status === 'DISPUTED' ? (

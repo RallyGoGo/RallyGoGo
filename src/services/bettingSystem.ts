@@ -62,7 +62,7 @@ export const BettingSystem = {
      * Place a bet using RPC for atomic transaction
      * V3 Sync: place_bet_v2(p_match_id, p_pick_team, p_amount)
      */
-    placeBet: async (matchId: string, _userId: string, pick: 'TEAM_1' | 'TEAM_2', amount: number, _odds: number) => {
+    placeBet: async (matchId: string, pick: 'TEAM_1' | 'TEAM_2', amount: number) => {
         // ✅ V3: RPC calculates odds and deducts from balance automatically
         const { data, error } = await supabase.rpc('place_bet_v2', {
             p_match_id: matchId,

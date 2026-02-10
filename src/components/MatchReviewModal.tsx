@@ -1,24 +1,10 @@
 import { useState } from 'react';
-import { supabase, isRpcSuccess } from '../lib/supabase';
-
-// Define the shape we expect from CourtBoard
-interface EnrichedMatch {
-    id: string;
-    winner_team: string | null;
-    player_1: string | null;
-    player_2: string | null;
-    player_3: string | null;
-    player_4: string | null;
-    p1_name: string;
-    p2_name: string;
-    p3_name: string;
-    p4_name: string;
-    score_team1: number | null;
-    score_team2: number | null;
-}
+import { supabase } from '../lib/supabase';
+import { logger } from '../utils/logger';
+import type { AppMatch } from '../types/app';
 
 interface Props {
-    match: EnrichedMatch;
+    match: AppMatch;
     user: { id: string };
     onClose: () => void;
     onSuccess: () => void;
@@ -53,7 +39,7 @@ export default function MatchReviewModal({ match, user, onClose, onSuccess }: Pr
         if (!selectedMvp || !selectedTag) return alert("Please select an MVP and a Reason!");
         setLoading(true);
 
-        console.log('[MatchReviewModal] handleSubmit starting:', {
+        logger.info('matchReview.submit_start', {
             matchId: match.id,
             score_team1: match.score_team1,
             score_team2: match.score_team2,
@@ -73,7 +59,7 @@ export default function MatchReviewModal({ match, user, onClose, onSuccess }: Pr
             if (voteError && voteError.code !== '23505') throw voteError; // Ignore unique constraint violation (already voted)
 
             // 2. Confirm Match via RPC
-            console.log('[MatchReviewModal] Calling finish_match_v2...');
+            logger.info('matchReview.finish_v2_call', { matchId: match.id });
             const { data, error } = await supabase.rpc('finish_match_v2', {
                 p_match_id: match.id,
                 p_team1_score: match.score_team1 || 0,
@@ -81,10 +67,10 @@ export default function MatchReviewModal({ match, user, onClose, onSuccess }: Pr
                 p_confirmation_type: 'NORMAL_CONFIRM'
             });
 
-            console.log('[MatchReviewModal] finish_match_v2 FULL RESPONSE:', { data, error });
+            logger.info('matchReview.finish_v2_response', { data, error: error?.message });
 
             if (error) {
-                console.error('[MatchReviewModal] Supabase ERROR:', error);
+                logger.error('matchReview.supabase_error', error);
                 throw error;
             }
 
@@ -92,13 +78,11 @@ export default function MatchReviewModal({ match, user, onClose, onSuccess }: Pr
             type RpcResponse = { success?: boolean; error?: string; message?: string; bets_settled?: number; match_type?: string; sqlstate?: string };
             const rpcData = data as RpcResponse;
 
-            console.log('[MatchReviewModal] Parsed response:', {
+            logger.info('matchReview.parsed_response', {
                 success: rpcData?.success,
                 error: rpcData?.error,
                 bets_settled: rpcData?.bets_settled,
-                match_type: rpcData?.match_type,
-                sqlstate: rpcData?.sqlstate,
-                message: rpcData?.message
+                match_type: rpcData?.match_type
             });
 
             if (!rpcData?.success) {
@@ -113,7 +97,7 @@ export default function MatchReviewModal({ match, user, onClose, onSuccess }: Pr
             onClose();
 
         } catch (e: unknown) {
-            console.error('[MatchReviewModal] CATCH:', e);
+            logger.error('matchReview.submit_error', e);
             const msg = e instanceof Error ? e.message : 'Unknown error';
             if (msg.includes("Match already finished")) {
                 alert("⚠️ Match was already confirmed!");

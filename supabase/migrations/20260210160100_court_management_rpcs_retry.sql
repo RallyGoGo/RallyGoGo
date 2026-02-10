@@ -185,5 +185,5 @@ END;
 $$;
 GRANT EXECUTE ON FUNCTION public.end_match TO authenticated,
   service_role;
-GRANT EXECUTE ON FUNCTION public.report_score TO authenticated,
+GRANT EXECUTE ON FUNCTION public.report_score(UUID, TEXT, TEXT) TO authenticated,
   service_role;

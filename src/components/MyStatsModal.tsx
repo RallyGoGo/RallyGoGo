@@ -214,7 +214,8 @@ export default function MyStatsModal({ user, onClose, onUpdate }: Props) {
 
     const handleSave = async () => {
         setSaving(true);
-        const { error } = await supabase.from('profiles').update({ emoji: selectedEmoji, avatar_url: avatarUrl }).eq('id', user.id);
+        // ✅ P1 Fix: Use RPC instead of direct update
+        const { error } = await supabase.rpc('update_my_profile', { p_emoji: selectedEmoji ?? undefined, p_avatar_url: avatarUrl ?? undefined });
         if (error) alert(error.message); else { alert("✅ Profile Updated!"); onUpdate(); onClose(); }
         setSaving(false);
     };

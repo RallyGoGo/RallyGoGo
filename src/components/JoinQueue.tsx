@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase, Profile } from '../lib/supabase';
+import { logger } from '../utils/logger';
 import GuestRegistrar from './GuestRegistrar';
 
 // ============================================================================
@@ -41,7 +42,7 @@ export default function JoinQueue({ user, profile }: JoinQueueProps) {
                 .maybeSingle();
 
             if (error) {
-                console.error('[JoinQueue] Check error:', error);
+                logger.error('joinQueue.check_error', error);
                 return;
             }
 
@@ -55,7 +56,7 @@ export default function JoinQueue({ user, profile }: JoinQueueProps) {
                 if (!isEditing) setDepartureTime('');
             }
         } catch (err) {
-            console.error('[JoinQueue] Queue Check Error:', err);
+            logger.error('joinQueue.check_exception', err);
         }
     }, [user.id, isEditing]);
 
@@ -119,35 +120,22 @@ export default function JoinQueue({ user, profile }: JoinQueueProps) {
             // Convert HH:mm to ISO 8601 timestamp (TIMESTAMPTZ)
             const departureTimestamp = targetDate.toISOString();
 
-            // 🔍 DIAGNOSTIC: Check Supabase client status
-            console.log('[JoinQueue] 🔍 Supabase client URL:', import.meta.env.VITE_SUPABASE_URL?.substring(0, 30) + '...');
-            console.log('[JoinQueue] 🔍 About to construct RPC promise...');
-
             // Call RPC with 15s Timeout
-            console.log('[JoinQueue] Calling join_queue RPC with timestamp:', departureTimestamp);
-
             const rpcPromise = supabase.rpc('join_queue', {
                 p_priority_score: calculatedScore,
                 p_departure_time: departureTimestamp
             });
-
-            console.log('[JoinQueue] 🔍 RPC promise constructed, starting race...');
 
             const timeoutPromise = new Promise((_, reject) =>
                 setTimeout(() => reject(new Error('REQUEST_TIMEOUT')), 15000)
             );
 
             // Race RPC against timeout
-            console.log('[JoinQueue] 🔍 Awaiting Promise.race...');
             const result = await Promise.race([rpcPromise, timeoutPromise]) as { data: unknown; error: unknown };
-            console.log('[JoinQueue] 🔍 Promise.race resolved!');
             const { data, error } = result;
 
-            // 🔍 DIAGNOSTIC: Log full response
-            console.log('[JoinQueue] RPC Response:', { data, error });
-
             if (error) {
-                console.error('[JoinQueue] Supabase client error:', error);
+                logger.error('joinQueue.join_supabase_error', error);
                 throw error;
             }
 
@@ -165,14 +153,6 @@ export default function JoinQueue({ user, profile }: JoinQueueProps) {
                 throw new Error('서버 응답 없음');
             }
 
-            console.log('[JoinQueue] Parsed response:', response);
-
-            if (!response) {
-                throw new Error('서버 응답 없음');
-            }
-
-            console.log('[JoinQueue] Parsed response:', response);
-
             if (response.success === true) {
                 if (response.was_duplicate) {
                     alert('이미 대기열에 등록되어 있습니다! 🔄');
@@ -183,7 +163,7 @@ export default function JoinQueue({ user, profile }: JoinQueueProps) {
             } else {
                 // Extract error with multiple fallbacks
                 const errorMsg = response.error || response.message || JSON.stringify(response);
-                console.error('[JoinQueue] RPC Error:', errorMsg);
+                logger.error('joinQueue.join_rpc_error', errorMsg);
 
                 // Provide user-friendly messages for known errors
                 const friendlyMessages: Record<string, string> = {
@@ -195,7 +175,7 @@ export default function JoinQueue({ user, profile }: JoinQueueProps) {
                 throw new Error(friendlyMessages[errorMsg] || errorMsg);
             }
         } catch (error: unknown) {
-            console.error('[JoinQueue] Join error:', error);
+            logger.error('joinQueue.join_exception', error);
             const message = error instanceof Error ? error.message : 'Unknown error';
             alert('오류 발생: ' + message);
         } finally {
@@ -204,32 +184,47 @@ export default function JoinQueue({ user, profile }: JoinQueueProps) {
     };
 
     // ============================================================================
-    // UPDATE DEPARTURE TIME (Direct update - no RPC needed for simple time change)
+    // UPDATE DEPARTURE TIME (Strict RPC) - V3 Enhanced
     // ============================================================================
     const handleUpdateTime = async () => {
         if (!myQueue || !departureTime) return;
 
         setLoading(true);
         try {
-            // Convert HH:mm to ISO 8601 timestamp for direct update
+            // Convert HH:mm to ISO 8601 timestamp
             const now = new Date();
             const [targetH, targetM] = departureTime.split(':').map(Number);
             const targetDate = new Date();
             targetDate.setHours(targetH, targetM, 0, 0);
             if (targetDate < now) targetDate.setDate(targetDate.getDate() + 1);
 
-            const { error } = await supabase
-                .from('queue')
-                .update({ departure_time: targetDate.toISOString() })
-                .eq('id', myQueue.id);
+            logger.info('joinQueue.update_time_attempt', { queueId: myQueue.id, newTime: targetDate.toISOString() });
 
-            if (error) throw error;
+            // Call RPC
+            const { data, error } = await supabase.rpc('update_queue_departure_time', {
+                p_queue_id: myQueue.id,
+                p_departure_time: targetDate.toISOString()
+            });
 
+            if (error) {
+                logger.error('joinQueue.update_supabase_error', error);
+                throw error;
+            }
+
+            type RpcResponse = { success: boolean; error?: string };
+            const response = data as RpcResponse;
+
+            if (!response.success) {
+                logger.error('joinQueue.update_rpc_fail', response.error);
+                throw new Error(response.error);
+            }
+
+            logger.info('joinQueue.update_success', { queueId: myQueue.id });
             alert('시간이 수정되었습니다! 🕒');
             setIsEditing(false);
             await checkMyQueue();
         } catch (error: unknown) {
-            console.error('[JoinQueue] Update error:', error);
+            logger.error('joinQueue.update_exception', error);
             const message = error instanceof Error ? error.message : 'Unknown error';
             alert('오류 발생: ' + message);
         } finally {
@@ -246,14 +241,10 @@ export default function JoinQueue({ user, profile }: JoinQueueProps) {
 
         setLoading(true);
         try {
-            console.log('[JoinQueue] Calling leave_queue RPC...');
             const { data, error } = await supabase.rpc('leave_queue');
 
-            // 🔍 DIAGNOSTIC: Log full response
-            console.log('[JoinQueue] leave_queue Response:', { data, error });
-
             if (error) {
-                console.error('[JoinQueue] Supabase client error:', error);
+                logger.error('joinQueue.leave_supabase_error', error);
                 throw error;
             }
 
@@ -277,11 +268,11 @@ export default function JoinQueue({ user, profile }: JoinQueueProps) {
                 setDepartureTime('');
             } else {
                 const errorMsg = response?.error || response?.message || 'Unknown error';
-                console.error('[JoinQueue] leave_queue Error:', errorMsg);
+                logger.error('joinQueue.leave_rpc_error', errorMsg);
                 throw new Error(errorMsg);
             }
         } catch (error: unknown) {
-            console.error('[JoinQueue] Leave error:', error);
+            logger.error('joinQueue.leave_exception', error);
             const message = error instanceof Error ? error.message : 'Unknown error';
             alert('오류 발생: ' + message);
         } finally {
@@ -415,8 +406,7 @@ export default function JoinQueue({ user, profile }: JoinQueueProps) {
             {showGuestReg && (
                 <GuestRegistrar
                     onClose={() => setShowGuestReg(false)}
-                    onRegister={(playerId: string) => {
-                        console.log('[JoinQueue] Guest registered with ID:', playerId);
+                    onRegister={() => {
                         setShowGuestReg(false);
                     }}
                 />

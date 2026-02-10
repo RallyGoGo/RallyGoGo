@@ -733,6 +733,17 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      update_queue_departure_time: {
+        Args: {
+          p_queue_id: string;
+          p_new_time: string;
+        };
+        Returns: boolean;
+      };
+      check_and_reset_daily: {
+        Args: Record<PropertyKey, never>;
+        Returns: boolean;
+      };
       cast_mvp_vote: {
         Args: { p_match_id: string; p_tag?: string; p_target_id: string }
         Returns: Json
@@ -833,6 +844,34 @@ export type Database = {
         Returns: number
       }
       start_match: { Args: { p_match_id: string }; Returns: Json }
+      swap_player: {
+        Args: { p_match_id: string; p_old_player_id: string; p_new_player_id: string }
+        Returns: Json
+      }
+      remove_expired_from_queue: {
+        Args: { p_queue_ids: string[] }
+        Returns: Json
+      }
+      create_profile: {
+        Args: { p_name: string; p_ntrp: number; p_gender: string }
+        Returns: Json
+      }
+      convert_guest_to_member: {
+        Args: { p_guest_id: string; p_name: string; p_email: string }
+        Returns: Json
+      }
+      admin_add_notice: {
+        Args: { p_content: string }
+        Returns: Json
+      }
+      admin_delete_notice: {
+        Args: { p_notice_id: string }
+        Returns: Json
+      }
+      update_my_profile: {
+        Args: { p_emoji?: string; p_avatar_url?: string }
+        Returns: Json
+      }
     }
     Enums: {
       bet_result_t: "OPEN" | "LOCKED" | "WON" | "LOST" | "DRAW" | "CANCELLED"
@@ -842,6 +881,7 @@ export type Database = {
       | "DRAFT"
       | "PLAYING"
       | "SCORING"
+      | "PENDING"
       | "FINISHED"
       | "CANCELLED"
       | "DISPUTED"
@@ -981,6 +1021,7 @@ export const Constants = {
         "DRAFT",
         "PLAYING",
         "SCORING",
+        "PENDING",
         "FINISHED",
         "CANCELLED",
         "DISPUTED",

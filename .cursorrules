@@ -1,17 +1,57 @@
 # Strict Project Rules for RallyGoGo
 
 ## Tech Stack
+
 - **Framework:** React (Vite) - NOT Next.js
 - **Language:** TypeScript (Strictly Typed)
 - **Styling:** Tailwind CSS
 - **State Management & Backend:** Supabase (Singleton Client)
 
 ## Architecture
+
 - **Business Logic:** MUST be isolated in `/src/services`.
 - **Supabase Client:** access via `src/lib/supabase.ts` (Singleton).
 - **No Hallucinations:** Use only existing Supabase v2 features.
 
 ## Coding Standards
+
 1. **Strict Types:** `noImplicitAny` is valid. Always define interfaces/types.
 2. **Latest Syntax:** Use functional components, hooks, and async/await.
-3. **Security:** RLS policies are the primary defense.
+
+## Security
+
+- **RLS policies** are the primary defense.
+
+## Antigravity Protocol (BKIT Edition)
+
+1. **Core Philosophy (Vibecoding)**
+   - **Flow State**: Maintain user momentum. Handle repetitive tasks autonomously.
+   - **Wow Factor**: Default to premium, modern aesthetics (Glassmorphism, Micro-interactions).
+   - **Gemini Native**: Leverage massive context; do not ask for files I can find myself.
+
+2. **Work Modes (Personas)**
+   - **ARCHITECT**: High-level design, trade-offs, security. (Output: `implementation_plan.md`)
+   - **CODER**: Implementation, Clean Code, SOLID.
+   - **DESIGNER**: UI/UX, Animations, Responsive.
+   - **QA**: Verification, Edge cases, Security checks.
+
+3. **PDCA Workflow (Mandatory)**
+   - **PLAN**: Analyze KIs -> `implementation_plan.md`.
+   - **DO**: Implement one logical unit at a time.
+   - **CHECK**: `verification` steps (tests, lints).
+   - **ACT**: `walkthrough.md` -> Retrospective.
+
+## BKIT Skill Registry (Dynamic Loading)
+When a specific task is requested, I MUST `view_file` the corresponding `SKILL.md` to load the expert protocol.
+
+- **GitHub Stats**: `/Users/youngs/.gemini/extensions/bkit/skills/github-stats/SKILL.md`
+- **Code Review**: `/Users/youngs/.gemini/extensions/bkit/skills/code-review/SKILL.md`
+- **Mobile App**: `/Users/youngs/.gemini/extensions/bkit/skills/mobile-app/SKILL.md`
+- **Desktop App**: `/Users/youngs/.gemini/extensions/bkit/skills/desktop-app/SKILL.md`
+- **Enterprise**: `/Users/youngs/.gemini/extensions/bkit/skills/enterprise/SKILL.md`
+- **Dynamic Web**: `/Users/youngs/.gemini/extensions/bkit/skills/dynamic/SKILL.md`
+- **Deployment**: `/Users/youngs/.gemini/extensions/bkit/skills/phase-9-deployment/SKILL.md`
+- **SEO & Security**: `/Users/youngs/.gemini/extensions/bkit/skills/phase-7-seo-security/SKILL.md`
+- **QA (Zero Script)**: `/Users/youngs/.gemini/extensions/bkit/skills/zero-script-qa/SKILL.md`
+
+> **Rule**: If user asks for "Code Review", I will read the `code-review/SKILL.md` first, then execute.

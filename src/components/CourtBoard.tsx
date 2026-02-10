@@ -1,8 +1,9 @@
-import { useEffect, useState, useMemo } from 'react';
-import { supabase } from '../lib/supabase';
-// Services
+import { useState, useMemo } from 'react';
+import { supabase, Match } from '../lib/supabase';
 // Services
 import { calculatePriorityScore, generateV83Match } from '../services/matchingSystem';
+import { logger } from '../utils/logger';
+import type { AppQueueItem, AppMatch } from '../types/app';
 
 // V3 Helper: Extract error from RPC JSON response
 type RpcResponse = { success?: boolean; error?: string; message?: string } | null;
@@ -13,73 +14,55 @@ const getRpcError = (data: unknown): string | null => {
     return null;
 };
 
-// Local Types - Match Row from V3 Schema
-type Match = {
-    id: string;
-    created_at: string | null;
-    player_1: string | null;
-    player_2: string | null;
-    player_3: string | null;
-    player_4: string | null;
-    status: string | null;
-    score_team1: number | null;
-    score_team2: number | null;
-    winner_team: string | null;
-    match_category: string | null;
-    match_type: string | null;
-    reported_by: string | null;
-    confirmed_by: string | null;
-    start_time: string | null;
-    end_time: string | null;
-    betting_closes_at: string | null;
-    court_name: string | null;
-    mvp_voting_open: boolean | null;
-    corrections_count: number | null;
-};
-
-// Local Profile type
-type Profile = {
-    id: string;
-    name: string | null;
-    gender: string | null;
-    ntrp: number | null;
-    elo_mens_doubles: number | null;
-    elo_womens_doubles: number | null;
-    elo_mixed_doubles: number | null;
-    elo_singles: number | null;
-    is_guest: boolean | null;
-    games_played_today: number | null;
-};
-
-// Queue Type (Custom combination for UI)
-// Aligned with matchingSystem.QueueItem
-type QueueCandidate = {
-    player_id: string;
-    priority_score: number;
-    joined_at: string;
-    departure_time: string;
-    profiles: Profile | null; // Safe Fetch
-    finalScore: number;
-    waitMinutes: number; // Required by matchingSystem.QueueItem
-};
-
-// Extends Match with Player Names for UI
-interface EnrichedMatch extends Match {
-    p1_name: string;
-    p2_name: string;
-    p3_name: string;
-    p4_name: string;
-}
+// Extends Match with Player Names for UI -> moved to types/app.ts
+// interface EnrichedMatch extends Match ... removed
 
 import MatchReviewModal from './MatchReviewModal';
 
 // User type for props - only need id for checking participation
 type UserProp = { id: string };
 
-export default function CourtBoard({ user }: { user: UserProp | null }) {
-    const [courts, setCourts] = useState<string[]>(['Court A', 'Court B']);
-    const [activeMatches, setActiveMatches] = useState<EnrichedMatch[]>([]);
+// Props interface
+interface CourtBoardProps {
+    user: UserProp | null;
+    matches: Match[]; // Using the raw Match type from supabase, but we know it's enriched if coming from useRallyData
+    queue: AppQueueItem[]; // Using refined type
+}
+
+export default function CourtBoard({ user, matches, queue }: CourtBoardProps) {
+    // V3: Matches and Queue are now passed as props from useRallyData (Centralized)
+    const { activeMatches, queueCandidates } = useMemo(() => {
+        // Filter matches for this component (DRAFT, PLAYING, SCORING)
+        // PENDING matches are handled by the parent or a separate notification component if needed, 
+        // but CourtBoard also displays them if they are on a court.
+        const filteredMatches = matches.filter(m =>
+            ['DRAFT', 'PLAYING', 'SCORING', 'PENDING'].includes(m.status || '')
+        ) as AppMatch[];
+
+        // Process Queue Data for UI
+        const scoredQueue = queue.map((item) => {
+            const joinedAt = item.joined_at || new Date().toISOString();
+            const input = { ...item, joined_at: joinedAt };
+            return {
+                ...item,
+                joined_at: joinedAt,
+                // Ensure we use a consistent ID field. matchingSystem uses player_id or user_id. 
+                // Our DB uses player_id.
+                player_id: item.player_id,
+                finalScore: calculatePriorityScore(input),
+                waitMinutes: 0
+            };
+        });
+
+        const sortedQueue = scoredQueue.sort((a, b) => (b.finalScore || 0) - (a.finalScore || 0)) as AppQueueItem[];
+
+        return { activeMatches: filteredMatches, queueCandidates: sortedQueue };
+    }, [matches, queue]);
+
+    // Local state for UI only
     const [loading, setLoading] = useState(false);
+    const [searchTerm, setSearchTerm] = useState('');
+    const [courts, setCourts] = useState<string[]>(['Court A', 'Court B']);
 
     // Score State
     const [scores, setScores] = useState<{ [matchId: string]: { t1: string, t2: string } }>({});
@@ -89,147 +72,23 @@ export default function CourtBoard({ user }: { user: UserProp | null }) {
     const [swapTarget, setSwapTarget] = useState<{ matchId: string; col: string; oldName: string; oldId: string } | null>(null);
     const [isManualModalOpen, setIsManualModalOpen] = useState(false);
     const [manualTargetCourt, setManualTargetCourt] = useState<string | null>(null);
-    const [selectedManualPlayers, setSelectedManualPlayers] = useState<QueueCandidate[]>([]);
-    const [queueCandidates, setQueueCandidates] = useState<QueueCandidate[]>([]);
-    const [searchTerm, setSearchTerm] = useState('');
+    const [selectedManualPlayers, setSelectedManualPlayers] = useState<AppQueueItem[]>([]);
+    const [matchReviewTarget, setMatchReviewTarget] = useState<AppMatch | null>(null);
 
-    // [New] Match Review Modal State
-    const [matchReviewTarget, setMatchReviewTarget] = useState<EnrichedMatch | null>(null);
+    // Derived State for Auto-Match
+    const getSmartSortedQueue = async () => {
+        return queueCandidates;
+    };
 
-    // [New] PENDING matches for notification (separate state)
-    const [pendingMatches, setPendingMatches] = useState<EnrichedMatch[]>([]);
-
-    // [New] Notification Banner Logic - Show PENDING matches requiring confirmation
-    const pendingReviewMatch = useMemo(() => user ? pendingMatches.find(m =>
+    // [New] PENDING matches for notification (derived from props)
+    const pendingReviewMatch = useMemo(() => user ? activeMatches.find(m =>
         m.status === 'PENDING' &&
         ([m.player_1, m.player_2, m.player_3, m.player_4].includes(user.id))
-    ) : null, [user, pendingMatches]);
+    ) : null, [user, activeMatches]);
 
     // Check if I am the opponent (needs to confirm) or reporter (waiting)
     const isPendingOpponent = pendingReviewMatch && user && pendingReviewMatch.reported_by !== user.id;
 
-    // Fetch PENDING matches for notification banner
-    const fetchPendingMatches = async () => {
-        // Note: PENDING status may not be in TypeScript types, use 'as' workaround
-        const { data } = await supabase
-            .from('matches')
-            .select('*')
-            .eq('status', 'PENDING' as 'DRAFT'); // TypeScript workaround for PENDING enum
-
-        if (data && data.length > 0) {
-            // Get player names
-            const allPlayerIds = new Set<string>();
-            data.forEach((m) => {
-                if (m.player_1) allPlayerIds.add(m.player_1);
-                if (m.player_2) allPlayerIds.add(m.player_2);
-                if (m.player_3) allPlayerIds.add(m.player_3);
-                if (m.player_4) allPlayerIds.add(m.player_4);
-            });
-
-            const { data: profiles } = await supabase
-                .from('profiles')
-                .select('*')
-                .in('id', Array.from(allPlayerIds));
-
-            const profileMap = new Map((profiles || []).map((p) => [p.id, p.name]));
-
-            const enriched = data.map((m) => ({
-                ...m,
-                p1_name: (m.player_1 ? profileMap.get(m.player_1) : '') || 'Unknown',
-                p2_name: (m.player_2 ? profileMap.get(m.player_2) : '') || 'Unknown',
-                p3_name: (m.player_3 ? profileMap.get(m.player_3) : '') || 'Unknown',
-                p4_name: (m.player_4 ? profileMap.get(m.player_4) : '') || 'Unknown',
-            })) as unknown as EnrichedMatch[];
-
-            setPendingMatches(enriched);
-        } else {
-            setPendingMatches([]);
-        }
-    };
-
-    useEffect(() => {
-        fetchMatches();
-        fetchPendingMatches();
-        const channel = supabase.channel('public:matches')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, () => {
-                fetchMatches();
-                fetchPendingMatches();
-            })
-            .subscribe();
-        return () => { supabase.removeChannel(channel); };
-    }, []);
-
-
-    // --- DATA FETCHING (SAFE 406 PREVENTION) ---
-    // V9.9.6: Exclude PENDING matches - court is released once score is submitted
-    const fetchMatches = async () => {
-        // Explicitly cast or allow inference if supabase client is typed (which we will verify next)
-        const { data } = await supabase
-            .from('matches')
-            .select('*')
-            .in('status', ['DRAFT', 'PLAYING', 'SCORING']); // Only show matches that are actively using the court
-
-        const matchData = data as EnrichedMatch[] | null;
-
-        if (!matchData) return;
-
-        const allPlayerIds = new Set<string>();
-        matchData.forEach((m) => {
-            if (m.player_1) allPlayerIds.add(m.player_1);
-            if (m.player_2) allPlayerIds.add(m.player_2);
-            if (m.player_3) allPlayerIds.add(m.player_3);
-            if (m.player_4) allPlayerIds.add(m.player_4);
-        });
-
-        if (allPlayerIds.size > 0) {
-            const { data: profiles } = await supabase
-                .from('profiles')
-                .select('*')
-                .in('id', Array.from(allPlayerIds));
-
-            const profileMap = new Map((profiles || []).map((p) => [p.id, p.name]));
-
-            const enriched = matchData.map((m) => ({
-                ...m,
-                p1_name: (m.player_1 ? profileMap.get(m.player_1) : '') || 'Unknown',
-                p2_name: (m.player_2 ? profileMap.get(m.player_2) : '') || 'Unknown',
-                p3_name: (m.player_3 ? profileMap.get(m.player_3) : '') || 'Unknown',
-                p4_name: (m.player_4 ? profileMap.get(m.player_4) : '') || 'Unknown',
-            })) as EnrichedMatch[];
-            setActiveMatches(enriched);
-        } else {
-            // Need to cast the initial data if no players found
-            const enriched = matchData.map((m) => ({
-                ...m, p1_name: '', p2_name: '', p3_name: '', p4_name: ''
-            })) as EnrichedMatch[];
-            setActiveMatches(enriched);
-        }
-    };
-
-    const getSmartSortedQueue = async () => {
-        const { data } = await supabase
-            .from('queue')
-            .select(`*, profiles (*)`)
-            .eq('is_active', true);
-
-        // Safe type assertion for joined query result
-        type QueueWithProfile = {
-            player_id: string;
-            priority_score: number;
-            joined_at: string;
-            departure_time: string;
-            profiles: Profile | null;
-        };
-        const queueData = (data ?? []) as QueueWithProfile[];
-
-        const scored = queueData.map((item) => ({
-            ...item,
-            priority_score: item.priority_score,
-            finalScore: calculatePriorityScore(item),
-            waitMinutes: 0 // Placeholder, calculated in matching
-        }));
-        return scored.sort((a, b) => b.finalScore - a.finalScore) as QueueCandidate[];
-    };
 
     // --- COURT MANAGEMENT ---
     const handleAddCourt = () => {
@@ -249,7 +108,7 @@ export default function CourtBoard({ user }: { user: UserProp | null }) {
         setLoading(true);
         try {
             const sortedList = await getSmartSortedQueue();
-            const matchResult = generateV83Match(sortedList);
+            const matchResult = generateV83Match(sortedList as any); // Cast as any to satisfy strict QueueItem requirements including joined_at string
 
             if (!matchResult) {
                 throw new Error("❌ Not enough players or no valid combination.");
@@ -259,14 +118,21 @@ export default function CourtBoard({ user }: { user: UserProp | null }) {
 
             // V9.7.2: Strict RPC Model - create_match_draft
             const { data, error } = await supabase.rpc('create_match_draft', {
-                p_player_ids: playerIds,
+                p_player_ids: playerIds.filter((id): id is string => !!id),
                 p_match_type: matchType as 'MIXED' | 'MENS_DOUBLES' | 'WOMENS_DOUBLES' | 'SINGLES',
                 p_court_name: courtName
             });
             const rpcErr = getRpcError(data);
-            if (error || rpcErr) throw new Error(error?.message || rpcErr || 'Unknown error');
-            fetchMatches();
-        } catch (e: Error | unknown) { alert(e instanceof Error ? e.message : 'Unknown error'); }
+            if (error || rpcErr) {
+                logger.error('match.auto_create_fail', error || rpcErr);
+                throw new Error(error?.message || rpcErr || 'Unknown error');
+            }
+            logger.info('match.auto_created', { court: courtName, matchType });
+            // // fetchMatches(); // Handled by Realtime in parent
+        } catch (e: Error | unknown) {
+            logger.error('match.auto_fail', e);
+            alert(e instanceof Error ? e.message : 'Unknown error');
+        }
         setLoading(false);
     };
 
@@ -275,18 +141,15 @@ export default function CourtBoard({ user }: { user: UserProp | null }) {
         if (loading) return;
         if (activeMatches.find(m => m.court_name === courtName)) { alert("❌ Court busy!"); return; }
         setLoading(true);
-        const sortedList = await getSmartSortedQueue();
-        if (sortedList) {
-            setQueueCandidates(sortedList);
-            setManualTargetCourt(courtName);
-            setSelectedManualPlayers([]);
-            setSearchTerm('');
-            setIsManualModalOpen(true);
-        }
+        // Queue candidates are already updated via props
+        setManualTargetCourt(courtName);
+        setSelectedManualPlayers([]);
+        setSearchTerm('');
+        setIsManualModalOpen(true);
         setLoading(false);
     };
 
-    const toggleManualSelection = (candidate: QueueCandidate) => {
+    const toggleManualSelection = (candidate: AppQueueItem) => {
         const isSelected = selectedManualPlayers.find(p => p.player_id === candidate.player_id);
         if (isSelected) {
             setSelectedManualPlayers(prev => prev.filter(p => p.player_id !== candidate.player_id));
@@ -315,13 +178,18 @@ export default function CourtBoard({ user }: { user: UserProp | null }) {
                 p_court_name: manualTargetCourt
             });
             const rpcErr = getRpcError(data);
-            if (error || rpcErr) throw new Error(error?.message || rpcErr || 'Unknown error');
+            if (error || rpcErr) {
+                logger.error('match.manual_create_fail', error || rpcErr);
+                throw new Error(error?.message || rpcErr || 'Unknown error');
+            }
+            logger.info('match.manual_created', { court: manualTargetCourt, isSingles });
             setIsManualModalOpen(false);
             setManualTargetCourt(null);
             setSelectedManualPlayers([]);
-            fetchMatches();
+            // // fetchMatches(); // Handled by Realtime in parent
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : 'Unknown error';
+            logger.error('match.manual_fail', e);
             alert("Error: " + msg);
         }
         setLoading(false);
@@ -331,42 +199,33 @@ export default function CourtBoard({ user }: { user: UserProp | null }) {
     const openSwapModal = async (matchId: string, col: string, oldName: string, oldId: string) => {
         if (loading) return;
         setLoading(true);
-        const sortedList = await getSmartSortedQueue();
-        if (sortedList) {
-            setQueueCandidates(sortedList);
-            setSwapTarget({ matchId, col, oldName, oldId });
-            setSearchTerm('');
-            setIsSwapModalOpen(true);
-        }
+        // Queue candidates are already updated via props
+        setSwapTarget({ matchId, col, oldName, oldId });
+        setSearchTerm('');
+        setIsSwapModalOpen(true);
         setLoading(false);
     };
 
-    const handleExecuteSwap = async (candidate: QueueCandidate) => {
+    const handleExecuteSwap = async (candidate: AppQueueItem) => {
         if (!swapTarget) return;
         if (!confirm(`🔄 Swap with [${candidate.profiles?.name}]?`)) return;
         try {
-            // Direct table update (swap_player RPC not defined in DB)
-            const updateCol = swapTarget.col; // 'player_1', 'player_2', etc.
-            const { error: updateError } = await supabase
-                .from('matches')
-                .update({ [updateCol]: candidate.player_id })
-                .eq('id', swapTarget.matchId);
-            if (updateError) throw updateError;
+            // ✅ P1 Fix: Use swap_player RPC (atomic operation)
+            const { data, error } = await supabase.rpc('swap_player', {
+                p_match_id: swapTarget.matchId,
+                p_old_player_id: swapTarget.oldId,
+                p_new_player_id: candidate.player_id
+            });
+            if (error) throw error;
+            if (data && typeof data === 'object' && 'error' in data) throw new Error(String((data as Record<string, unknown>).error));
 
-            // Return old player to queue (upsert with ignoreDuplicates)
-            await supabase.from('queue').upsert({
-                player_id: swapTarget.oldId,
-                is_active: true,
-                priority_score: 800 // Base re-queue priority
-            }, { onConflict: 'player_id', ignoreDuplicates: true });
-
-            // Remove new player from queue
-            await supabase.from('queue').delete().eq('player_id', candidate.player_id);
+            logger.info('match.player_swapped', { matchId: swapTarget.matchId, old: swapTarget.oldName, new: candidate.profiles?.name });
             setIsSwapModalOpen(false);
             setSwapTarget(null);
-            fetchMatches();
+            // fetchMatches();
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : 'Swap failed';
+            logger.error('match.swap_fail', e);
             alert("Swap Error: " + msg);
         }
     };
@@ -378,9 +237,12 @@ export default function CourtBoard({ user }: { user: UserProp | null }) {
             const { data, error } = await supabase.rpc('start_match', { p_match_id: matchId });
             const rpcErr = getRpcError(data);
             if (error || rpcErr) throw new Error(error?.message || rpcErr || 'Unknown error');
-            fetchMatches();
+
+            logger.info('match.started', { matchId });
+            // fetchMatches();
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : 'Start failed';
+            logger.error('match.start_fail', e);
             alert("Start Error: " + msg);
         }
     };
@@ -392,8 +254,13 @@ export default function CourtBoard({ user }: { user: UserProp | null }) {
             const { data, error } = await supabase.rpc('end_match', { p_match_id: matchId });
             const rpcErr = getRpcError(data);
             if (error || rpcErr) throw new Error(error?.message || rpcErr || 'Unknown error');
-            fetchMatches();
-        } catch (e: Error | unknown) { alert(e instanceof Error ? e.message : 'Unknown error'); }
+
+            logger.info('match.ended', { matchId });
+            // fetchMatches();
+        } catch (e: Error | unknown) {
+            logger.error('match.end_fail', e);
+            alert(e instanceof Error ? e.message : 'Unknown error');
+        }
     };
 
     const handleCancelMatch = async (matchId: string) => {
@@ -404,9 +271,12 @@ export default function CourtBoard({ user }: { user: UserProp | null }) {
             const { data, error } = await supabase.rpc('cancel_match', { p_match_id: matchId });
             const rpcErr = getRpcError(data);
             if (error || rpcErr) throw new Error(error?.message || rpcErr || 'Unknown error');
-            fetchMatches();
+
+            logger.info('match.cancelled', { matchId });
+            // fetchMatches();
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : 'Cancel failed';
+            logger.error('match.cancel_fail', e);
             alert("Error: " + msg);
         }
         setLoading(false);
@@ -425,7 +295,7 @@ export default function CourtBoard({ user }: { user: UserProp | null }) {
         const s1 = parseInt(s.t1), s2 = parseInt(s.t2);
         const winner = s1 > s2 ? 'TEAM_1' : s2 > s1 ? 'TEAM_2' : 'DRAW';
 
-        console.log('[CourtBoard] handleReportScore starting:', { matchId, s1, s2, winner });
+        logger.info('match.score_submit_start', { matchId, s1, s2, winner });
 
         setLoading(true);
         try {
@@ -437,17 +307,16 @@ export default function CourtBoard({ user }: { user: UserProp | null }) {
                 p_winner: winner
             });
 
-            console.log('[CourtBoard] report_score RESPONSE:', { data, error });
-
             const rpcErr = getRpcError(data);
             if (error || rpcErr) throw new Error(error?.message || rpcErr || 'Unknown error');
 
+            logger.info('match.score_reported', { matchId });
             // V9.7.2: Strict RPC Model - report_score logic complete
             // Service call removed - RPC handles everything
             alert("✅ Reported! Waiting for confirmation.");
-            fetchMatches();
+            // fetchMatches();
         } catch (e: Error | unknown) {
-            console.error('[CourtBoard] handleReportScore ERROR:', e);
+            logger.error('match.score_report_fail', e);
             alert(e instanceof Error ? e.message : 'Unknown error');
         }
         setLoading(false);
@@ -461,13 +330,7 @@ export default function CourtBoard({ user }: { user: UserProp | null }) {
         const match = activeMatches.find(m => m.id === matchId);
         if (!match) return;
 
-        console.log('[CourtBoard] handleConfirmMatch starting:', {
-            matchId,
-            score_team1: match.score_team1,
-            score_team2: match.score_team2,
-            match_type: match.match_type,
-            status: match.status
-        });
+        logger.info('match.confirm_start', { matchId });
 
         setLoading(true);
         try {
@@ -478,10 +341,8 @@ export default function CourtBoard({ user }: { user: UserProp | null }) {
                 p_confirmation_type: 'NORMAL_CONFIRM'
             });
 
-            console.log('[CourtBoard] finish_match_v2 FULL RESPONSE:', { data, error });
-
             if (error) {
-                console.error('[CourtBoard] finish_match_v2 Supabase ERROR:', error);
+                logger.error('match.finish_v2_fail', error);
                 throw error;
             }
 
@@ -489,26 +350,18 @@ export default function CourtBoard({ user }: { user: UserProp | null }) {
             type RpcResponse = { success?: boolean; error?: string; message?: string; bets_settled?: number; match_type?: string; sqlstate?: string };
             const rpcData = data as RpcResponse;
 
-            console.log('[CourtBoard] finish_match_v2 parsed response:', {
-                success: rpcData?.success,
-                error: rpcData?.error,
-                bets_settled: rpcData?.bets_settled,
-                match_type: rpcData?.match_type,
-                sqlstate: rpcData?.sqlstate,
-                message: rpcData?.message
-            });
-
             if (rpcData && !rpcData.success) {
                 if (rpcData.error && rpcData.error !== 'ALREADY_FINISHED') {
                     throw new Error(rpcData.error + (rpcData.message ? ': ' + rpcData.message : ''));
                 }
             }
 
+            logger.info('match.confirmed', { matchId, betsSettled: rpcData?.bets_settled });
             alert("🎉 Match Confirmed! ELO updated.");
-            fetchMatches();
+            // fetchMatches();
         } catch (e: unknown) {
-            console.error('[CourtBoard] handleConfirmMatch CATCH:', e);
             const msg = e instanceof Error ? e.message : 'Confirm failed';
+            logger.error('match.confirm_fail', e);
             alert(msg);
         }
         setLoading(false);
@@ -523,17 +376,19 @@ export default function CourtBoard({ user }: { user: UserProp | null }) {
             const rpcErr = getRpcError(data);
             if (error || rpcErr) throw new Error(error?.message || rpcErr || 'Unknown error');
 
+            logger.info('match.disputed', { matchId });
             alert("🛑 Rejected (Status: DISPUTED).");
-            fetchMatches();
+            // fetchMatches();
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : 'Reject failed';
+            logger.error('match.dispute_fail', e);
             alert(msg);
         }
         setLoading(false);
     };
 
     // --- RENDER HELPERS ---
-    const getMyTeam = (match: EnrichedMatch | undefined, uid: string) => {
+    const getMyTeam = (match: AppMatch | undefined, uid: string) => {
         if (!match || !uid) return 0;
         if ([match.player_1, match.player_2].includes(uid)) return 1;
         if ([match.player_3, match.player_4].includes(uid)) return 2;
@@ -742,9 +597,9 @@ export default function CourtBoard({ user }: { user: UserProp | null }) {
             {matchReviewTarget && (
                 <MatchReviewModal
                     match={matchReviewTarget}
-                    user={user}
+                    user={user!}
                     onClose={() => setMatchReviewTarget(null)}
-                    onSuccess={() => { fetchMatches(); setMatchReviewTarget(null); }}
+                    onSuccess={() => { setMatchReviewTarget(null); }}
                 />
             )}
 

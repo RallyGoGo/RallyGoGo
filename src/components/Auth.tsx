@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { logger } from '../utils/logger';
 
 export default function Auth() {
     const [loading, setLoading] = useState(false);
@@ -39,7 +40,7 @@ export default function Auth() {
 
         try {
             // 🔍 DIAGNOSTIC: Log auth start
-            console.log('[Auth] Starting authentication process...');
+            logger.info('auth.start', { isSignUp });
 
             // Helper function for timeout (supports Promise and PromiseLike)
             const withTimeout = <T,>(promiseLike: PromiseLike<T>, ms: number = 15000): Promise<T> => {
@@ -53,7 +54,7 @@ export default function Auth() {
                 // ★ [Guest→Member Conversion] 기존 게스트 프로필 검색
                 // 이름 기반으로 검색 (게스트 이름은 "홍길동 (G)" 형식)
                 const searchName = `${name.trim()} (G)`;
-                console.log('[Auth] Checking for existing guest profile:', searchName);
+                logger.info('auth.check_guest', { searchName });
 
                 const { data: existingGuest } = await withTimeout(
                     supabase
@@ -65,65 +66,68 @@ export default function Auth() {
                 );
 
                 // 1. Auth 계정 생성
-                console.log('[Auth] Creating auth account with email:', email);
+                logger.info('auth.signup_attempt', { email });
                 const { data, error } = await withTimeout(supabase.auth.signUp({ email, password }));
-                console.log('[Auth] signUp response:', { data: data ? 'received' : 'null', error });
+
                 if (error) throw error;
+                logger.info('auth.signup_success', { userId: data.user?.id });
 
                 if (data.user) {
                     if (existingGuest) {
-                        // ★ [Case A] 게스트 → 회원 전환 (ELO 승계!)
-                        const { error: updateError } = await supabase
-                            .from('profiles')
-                            .update({
-                                id: data.user.id,  // Auth ID로 변경
-                                email: email,
-                                name: name.trim(),  // "(G)" 제거
-                                is_guest: false,
-                                // ELO, total_games_history, elo_history는 그대로 유지!
-                            })
-                            .eq('id', existingGuest.id);
-
-                        if (updateError) {
-                            setErrorMsg('게스트 전환 실패: ' + updateError.message);
-                        } else {
-                            const inheritedElo = existingGuest.elo_mixed_doubles || getInitialElo(ntrp);
-                            alert(`✅ 게스트 계정이 회원으로 전환되었습니다!\n\n승계된 ELO: ${inheritedElo}점\n경기 기록: ${existingGuest.total_games_history || 0}경기`);
-                            setIsSignUp(false);
-                        }
-                    } else {
-                        // ★ [Case B] 신규 회원 생성 (기존 로직)
-                        const initialScore = getInitialElo(ntrp);
-                        // V3 Schema: Column names have 's' (mens, womens), Gender is ENUM (MALE/FEMALE)
-                        const { error: profileError } = await supabase.from('profiles').insert({
-                            id: data.user.id,
-                            email: email,
-                            name: name,
-                            ntrp: parseFloat(ntrp),
-                            gender: gender === 'Male' ? 'MALE' : 'FEMALE',  // V3 uses ENUM
-                            elo_mens_doubles: initialScore,    // Fixed: men → mens
-                            elo_womens_doubles: initialScore,  // Fixed: women → womens
-                            elo_mixed_doubles: initialScore,
-                            elo_singles: initialScore,
-                            is_guest: false
+                        // ★ [Case A] 게스트 → 회원 전환 (ELO 승계!) — ✅ P1 Fix: Use RPC
+                        const { data: rpcData, error: rpcError } = await supabase.rpc('convert_guest_to_member', {
+                            p_guest_id: existingGuest.id,
+                            p_name: name.trim(),
+                            p_email: email
                         });
 
-                        if (profileError) {
-                            setErrorMsg('프로필 저장 실패: ' + profileError.message);
+                        if (rpcError) {
+                            logger.error('auth.guest_convert_fail', rpcError);
+                            setErrorMsg('게스트 전환 실패: ' + rpcError.message);
                         } else {
-                            alert(`가입 성공! 시작 점수: ${initialScore}점`);
-                            setIsSignUp(false);
+                            const result = rpcData as { success?: boolean; inherited_elo?: number; total_games?: number; error?: string } | null;
+                            if (result?.error) {
+                                logger.error('auth.guest_convert_logic_error', result.error);
+                                setErrorMsg('게스트 전환 실패: ' + result.error);
+                            } else {
+                                const inheritedElo = result?.inherited_elo ?? getInitialElo(ntrp);
+                                logger.info('auth.guest_convert_success', { inheritedElo });
+                                alert(`✅ 게스트 계정이 회원으로 전환되었습니다!\n\n승계된 ELO: ${inheritedElo}점\n경기 기록: ${result?.total_games ?? 0}경기`);
+                                setIsSignUp(false);
+                            }
+                        }
+                    } else {
+                        // ★ [Case B] 신규 회원 생성 — ✅ P1 Fix: Use create_profile RPC
+                        const { data: rpcData, error: rpcError } = await supabase.rpc('create_profile', {
+                            p_name: name,
+                            p_ntrp: parseFloat(ntrp),
+                            p_gender: gender === 'Male' ? 'MALE' : 'FEMALE'
+                        });
+
+                        if (rpcError) {
+                            logger.error('auth.create_profile_fail', rpcError);
+                            setErrorMsg('프로필 저장 실패: ' + rpcError.message);
+                        } else {
+                            const result = rpcData as { success?: boolean; initial_elo?: number; error?: string } | null;
+                            if (result?.error) {
+                                logger.error('auth.create_profile_logic_error', result.error);
+                                setErrorMsg('프로필 저장 실패: ' + result.error);
+                            } else {
+                                logger.info('auth.create_profile_success', { initialElo: result?.initial_elo });
+                                alert(`가입 성공! 시작 점수: ${result?.initial_elo ?? 1200}점`);
+                                setIsSignUp(false);
+                            }
                         }
                     }
                 }
             } else {
-                console.log('[Auth] Signing in with email:', email);
+                logger.info('auth.signin_attempt', { email });
                 const { error } = await withTimeout(supabase.auth.signInWithPassword({ email, password }));
-                console.log('[Auth] signIn completed');
                 if (error) throw error;
+                logger.info('auth.signin_success');
             }
         } catch (error: unknown) {
-            console.error("Auth Error:", error);
+            logger.error('auth.error', error);
             type AuthError = { error_description?: string; message?: string };
             const err = error as AuthError;
             setErrorMsg(err.error_description || err.message || "로그인 실패");

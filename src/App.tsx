@@ -1,17 +1,13 @@
-import { useState, useEffect, lazy, Suspense, useCallback, useMemo, useRef } from 'react';
-import { Session, User } from '@supabase/supabase-js';
-import {
-  supabase,
-  Profile,
-  Match,
-  Queue
-} from './lib/supabase';
+import { useState, lazy, Suspense, useMemo, useCallback } from 'react';
+import { User } from '@supabase/supabase-js';
+import { supabase } from './lib/supabase';
+import { useRallyData } from './hooks/useRallyData';
 
 import Auth from './components/Auth';
-import JoinQueue from './components/JoinQueue';
-import QueueBoard from './components/QueueBoard';
-import CourtBoard from './components/CourtBoard';
-import MyStatsModal from './components/MyStatsModal';
+const JoinQueue = lazy(() => import('./components/JoinQueue'));
+const QueueBoard = lazy(() => import('./components/QueueBoard'));
+const CourtBoard = lazy(() => import('./components/CourtBoard'));
+const MyStatsModal = lazy(() => import('./components/MyStatsModal'));
 
 // ============================================================================
 // VERCEL BEST PRACTICES: Dynamic imports for code splitting
@@ -39,25 +35,15 @@ function LoadingSpinner({ message = '로딩 중...' }: { message?: string }) {
 // MAIN APP COMPONENT
 // ============================================================================
 export default function App() {
-  // ============================================================================
-  // STATE
-  // ============================================================================
-  const [session, setSession] = useState<Session | null>(null);
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [activeTab, setActiveTab] = useState<'PLAY' | 'RANK'>('PLAY');
+  // Use Custom Hook for Data
+  const { session, profile, activeNotice, matches, queue, isInitializing, refetch } = useRallyData();
 
-  // App loading state - starts true, becomes false when auth state is determined
-  const [isInitializing, setIsInitializing] = useState(true);
+  const [activeTab, setActiveTab] = useState<'PLAY' | 'RANK'>('PLAY');
 
   // Modal states
   const [isMyPageOpen, setIsMyPageOpen] = useState(false);
   const [isAdminOpen, setIsAdminOpen] = useState(false);
   const [isBettingOpen, setIsBettingOpen] = useState(false);
-
-  // Data states
-  const [activeNotice, setActiveNotice] = useState<string | null>(null);
-  const [matches, setMatches] = useState<Match[]>([]);
-  const [queue, setQueue] = useState<Queue[]>([]);
 
   // ============================================================================
   // DERIVED STATE - Memoized for performance
@@ -71,185 +57,6 @@ export default function App() {
     profile?.role === 'admin',
     [profile?.role]
   );
-
-  // ============================================================================
-  // DATA FETCHING FUNCTIONS
-  // ============================================================================
-  const fetchProfile = useCallback(async (userId: string) => {
-    try {
-      console.log('[App] Fetching profile for:', userId);
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .maybeSingle();
-
-      if (error) {
-        console.error('[fetchProfile] Error:', error.message);
-        return null;
-      }
-
-      if (data) {
-        console.log('[App] Profile loaded:', data.name);
-        setProfile(data);
-      }
-      return data;
-    } catch (err) {
-      console.error('[fetchProfile] Exception:', err);
-      return null;
-    }
-  }, []);
-
-  const fetchNotice = useCallback(async () => {
-    try {
-      const { data, error } = await supabase
-        .from('notices')
-        .select('content')
-        .eq('is_active', true)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (error) {
-        console.error('[fetchNotice] Error:', error.message);
-        return null;
-      }
-
-      setActiveNotice(data?.content ?? null);
-      return data;
-    } catch (err) {
-      console.error('[fetchNotice] Exception:', err);
-      return null;
-    }
-  }, []);
-
-  const fetchMatches = useCallback(async () => {
-    try {
-      const { data, error } = await supabase
-        .from('matches')
-        .select('*')
-        .in('status', ['DRAFT', 'PLAYING', 'SCORING'])
-        .order('created_at', { ascending: false });
-
-      if (error) {
-        console.error('[fetchMatches] Error:', error.message);
-        return [];
-      }
-
-      if (data) setMatches(data);
-      return data ?? [];
-    } catch (err) {
-      console.error('[fetchMatches] Exception:', err);
-      return [];
-    }
-  }, []);
-
-  const fetchQueue = useCallback(async () => {
-    try {
-      const { data, error } = await supabase
-        .from('queue')
-        .select('*')
-        .eq('is_active', true)
-        .order('priority_score', { ascending: false });
-
-      if (error) {
-        console.error('[fetchQueue] Error:', error.message);
-        return [];
-      }
-
-      if (data) setQueue(data);
-      return data ?? [];
-    } catch (err) {
-      console.error('[fetchQueue] Exception:', err);
-      return [];
-    }
-  }, []);
-
-  // ============================================================================
-  // MAIN EFFECT: AUTH STATE & INITIALIZATION
-  // ============================================================================
-  // KEY INSIGHT: onAuthStateChange is the reliable way to get session
-  // getSession() can hang, but onAuthStateChange always fires
-  // ============================================================================
-  useEffect(() => {
-    console.log('[App] 🚀 Setting up auth listener...');
-    let mounted = true;
-
-    // ============================================================
-    // AUTH STATE LISTENER - This is the PRIMARY way to get session
-    // It fires immediately with current state, and on any changes
-    // ============================================================
-    const { data: { subscription: authSubscription } } = supabase.auth.onAuthStateChange(
-      async (event, newSession) => {
-        if (!mounted) return;
-
-        console.log('[App] 🔐 Auth state change:', event, newSession ? 'Has session' : 'No session');
-
-        setSession(newSession);
-
-        // End initialization - we now know the auth state
-        if (isInitializing) {
-          console.log('[App] ✅ Auth determined, ending initialization');
-          setIsInitializing(false);
-        }
-
-        // Fetch profile if logged in
-        // CRITICAL: Use setTimeout to defer to next tick - avoids onAuthStateChange deadlock
-        // See: https://github.com/supabase/supabase-js/issues/1620
-        if (newSession?.user?.id) {
-          setTimeout(() => fetchProfile(newSession.user.id), 0);
-        } else {
-          setProfile(null);
-        }
-      }
-    );
-
-    // ============================================================
-    // FAILSAFE: If no auth event after 5 seconds, end initialization anyway
-    // This prevents infinite loading if Supabase is completely unreachable
-    // ============================================================
-    const failsafeTimeout = setTimeout(() => {
-      if (mounted && isInitializing) {
-        console.log('[App] ⏰ Failsafe timeout - ending initialization');
-        setIsInitializing(false);
-      }
-    }, 5000);
-
-    // ============================================================
-    // REALTIME SUBSCRIPTIONS
-    // ============================================================
-    const realtimeChannel = supabase
-      .channel('app-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notices' }, () => fetchNotice())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, () => fetchMatches())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'queue' }, () => fetchQueue())
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles' }, async (payload) => {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (payload.new && user?.id === (payload.new as Profile).id) {
-          setProfile(payload.new as Profile);
-        }
-      })
-      .subscribe((status) => {
-        console.log('[App] Realtime status:', status);
-      });
-
-    // ============================================================
-    // FETCH INITIAL DATA (non-blocking, fire and forget)
-    // ============================================================
-    fetchNotice();
-    fetchMatches();
-    fetchQueue();
-
-    // ============================================================
-    // CLEANUP
-    // ============================================================
-    return () => {
-      mounted = false;
-      clearTimeout(failsafeTimeout);
-      authSubscription.unsubscribe();
-      supabase.removeChannel(realtimeChannel);
-    };
-  }, []); // Empty deps - run once on mount
 
   // ============================================================================
   // EVENT HANDLERS
@@ -267,16 +74,14 @@ export default function App() {
 
   const handleSignOut = useCallback(async () => {
     await supabase.auth.signOut();
-    setProfile(null);
-    setMatches([]);
-    setQueue([]);
+    // Hook will handle state update via auth listener
   }, []);
 
   const handleProfileUpdate = useCallback(() => {
     if (session?.user?.id) {
-      fetchProfile(session.user.id);
+      refetch.profile(session.user.id);
     }
-  }, [session?.user?.id, fetchProfile]);
+  }, [session, refetch]);
 
   // ============================================================================
   // RENDER: Loading State
@@ -362,17 +167,19 @@ export default function App() {
       {/* 메인 컨텐츠 */}
       <main className="p-4 max-w-7xl mx-auto">
         {activeTab === 'PLAY' ? (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            <div className="order-1 lg:col-span-4 lg:order-1">
-              <JoinQueue user={user} profile={profile} />
+          <Suspense fallback={<LoadingSpinner message="경기장 입장 중..." />}>
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              <div className="order-1 lg:col-span-4 lg:order-1">
+                <JoinQueue user={user} profile={profile} />
+              </div>
+              <div className="order-2 lg:col-span-8 lg:order-2 lg:row-span-2">
+                <CourtBoard user={user} matches={matches} queue={queue} />
+              </div>
+              <div className="order-3 lg:col-span-4 lg:order-3">
+                <QueueBoard user={user} isAdmin={isAdmin} queue={queue} />
+              </div>
             </div>
-            <div className="order-2 lg:col-span-8 lg:order-2 lg:row-span-2">
-              <CourtBoard user={user} />
-            </div>
-            <div className="order-3 lg:col-span-4 lg:order-3">
-              <QueueBoard user={user} />
-            </div>
-          </div>
+          </Suspense>
         ) : (
           <div className="max-w-2xl mx-auto min-h-[80vh]">
             <Suspense fallback={<LoadingSpinner message="랭킹 로딩 중..." />}>
@@ -409,11 +216,13 @@ export default function App() {
 
       {/* 모달들 */}
       {isMyPageOpen && (
-        <MyStatsModal
-          user={user}
-          onClose={() => setIsMyPageOpen(false)}
-          onUpdate={handleProfileUpdate}
-        />
+        <Suspense fallback={<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"><div className="text-white">Loaidng...</div></div>}>
+          <MyStatsModal
+            user={user}
+            onClose={() => setIsMyPageOpen(false)}
+            onUpdate={handleProfileUpdate}
+          />
+        </Suspense>
       )}
 
       {isAdminOpen && (

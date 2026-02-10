@@ -1,5 +1,6 @@
 // matchingSystem.ts - V8.3 Matching Engine
 // Note: This service is used by CourtBoard for match generation
+import { logger } from '../utils/logger';
 
 // ------------------------------------------------------------------
 // Type Definitions
@@ -27,11 +28,24 @@ export type QueueItem = {
     waitMinutes: number;
 };
 
+// Minimal type for calculatePriorityScore — doesn't require computed fields or full PlayerProfile
+export type QueueItemInput = {
+    joined_at: string;
+    departure_time: string | null;
+    profiles: {
+        ntrp?: number | null;
+        games_played_today?: number | null;
+        gender?: string | null;
+        [key: string]: unknown;
+    } | null;
+    [key: string]: unknown;
+};
+
 // ------------------------------------------------------------------
 // 1. New Scoring Algorithm (V8.2 - Polished)
 // ------------------------------------------------------------------
 // (점수 계산 로직은 기존과 동일하며 완벽합니다. 그대로 유지합니다.)
-export const calculatePriorityScore = (item: QueueItem): number => {
+export const calculatePriorityScore = (item: QueueItemInput): number => {
     try {
         const profile = item.profiles;
         const now = new Date();
@@ -64,22 +78,36 @@ export const calculatePriorityScore = (item: QueueItem): number => {
             else bonus += 3000;
         }
 
-        // C. Last Game Bonus (Safe Parsing)
-        if (item.departure_time && typeof item.departure_time === 'string' && item.departure_time.includes(':')) {
-            const parts = item.departure_time.split(':');
-            const targetH = Number(parts[0]);
-            const targetM = Number(parts[1]);
+        // C. Last Game Bonus (Safe Parsing for ISO or HH:mm)
+        // V9.9.x: departure_time is now TIMESTAMPTZ (ISO string)
+        if (item.departure_time) {
+            let targetDate: Date | null = null;
 
-            if (!isNaN(targetH) && !isNaN(targetM)) {
-                const targetDate = new Date(now);
-                targetDate.setHours(targetH, targetM, 0, 0);
-
-                // Handle late night cases (crossing midnight) if needed, or keep simple
-                if (targetDate.getTime() < now.getTime() - 12 * 60 * 60 * 1000) {
-                    targetDate.setDate(targetDate.getDate() + 1);
+            // Case A: ISO String (e.g., 2026-02-11T22:00:00...)
+            if (item.departure_time.includes('T')) {
+                const parsed = new Date(item.departure_time);
+                if (!isNaN(parsed.getTime())) {
+                    targetDate = parsed;
                 }
+            }
+            // Case B: Old format "HH:mm" (Backward compatibility)
+            else if (item.departure_time.includes(':')) {
+                const parts = item.departure_time.split(':');
+                const targetH = Number(parts[0]);
+                const targetM = Number(parts[1]);
+                if (!isNaN(targetH) && !isNaN(targetM)) {
+                    targetDate = new Date(now);
+                    targetDate.setHours(targetH, targetM, 0, 0);
+                    // Handle crossing midnight (e.g. now 23:00, target 01:00)
+                    if (targetDate.getTime() < now.getTime() - 12 * 60 * 60 * 1000) {
+                        targetDate.setDate(targetDate.getDate() + 1);
+                    }
+                }
+            }
 
+            if (targetDate) {
                 const diffMinutes = (targetDate.getTime() - now.getTime()) / 60000;
+                // Urgency Bonus: Only if leaving within 40 mins
                 if (diffMinutes > 0 && diffMinutes <= 40) {
                     bonus += 8000;
                 }
@@ -209,6 +237,12 @@ export const generateV83Match = (queue: QueueItem[]) => {
     // 이것이 "고수1+하수1 vs 고수1+하수1" 구도입니다.
     const team1 = [finalSorted[0], finalSorted[3]];
     const team2 = [finalSorted[1], finalSorted[2]];
+
+    logger.info('matching.v83_generated', {
+        matchType,
+        team1: team1.map(p => p.profiles?.name),
+        team2: team2.map(p => p.profiles?.name)
+    });
 
     return {
         players: selected4,
