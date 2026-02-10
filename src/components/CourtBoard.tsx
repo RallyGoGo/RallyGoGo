@@ -432,19 +432,25 @@ export default function CourtBoard({ user, matches, queue }: CourtBoardProps) {
     return (
         <div className="grid grid-cols-1 gap-4">
             {/* 🔔 Notification Banner */}
-            {isPendingOpponent && pendingReviewMatch && (
+            {pendingReviewMatch && (
                 <div
-                    onClick={() => setMatchReviewTarget(pendingReviewMatch)}
-                    className="bg-gradient-to-r from-amber-500 to-orange-500 p-4 rounded-2xl shadow-xl flex items-center justify-between cursor-pointer animate-pulse hover:scale-[1.02] transition-transform"
+                    onClick={() => isPendingOpponent ? setMatchReviewTarget(pendingReviewMatch) : null}
+                    className={`p-4 rounded-2xl shadow-xl flex items-center justify-between mb-4 transition-transform ${isPendingOpponent ? 'bg-gradient-to-r from-amber-500 to-orange-500 cursor-pointer animate-pulse hover:scale-[1.02]' : 'bg-slate-800 border border-slate-700'}`}
                 >
                     <div className="flex items-center gap-3">
-                        <span className="text-3xl bg-white/20 p-2 rounded-full">🔔</span>
+                        <span className="text-3xl bg-white/20 p-2 rounded-full">{isPendingOpponent ? '🔔' : '⏳'}</span>
                         <div>
-                            <p className="font-black text-white text-lg leading-tight">Match Confirmation Required</p>
-                            <p className="text-amber-100 text-xs font-bold">Court Released • Review Score & Vote MVP</p>
+                            <p className={`font-black text-lg leading-tight ${isPendingOpponent ? 'text-white' : 'text-slate-300'}`}>
+                                {isPendingOpponent ? 'Match Confirmation Required' : 'Waiting for Opponent Confirmation'}
+                            </p>
+                            <p className={`text-xs font-bold ${isPendingOpponent ? 'text-amber-100' : 'text-slate-500'}`}>
+                                {isPendingOpponent ? 'Court Released • Review Score & Vote MVP' : 'Score Submitted • Court Released'}
+                            </p>
                         </div>
                     </div>
-                    <button className="bg-white text-orange-600 font-black px-4 py-2 rounded-xl shadow-md text-sm">Review Now</button>
+                    {isPendingOpponent && (
+                        <button className="bg-white text-orange-600 font-black px-4 py-2 rounded-xl shadow-md text-sm">Review Now</button>
+                    )}
                 </div>
             )}
 
