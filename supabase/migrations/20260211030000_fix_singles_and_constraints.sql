@@ -100,7 +100,7 @@ VALUES (
         END,
         -- P3 (Team 2)
         CASE
-            WHEN p_player_count >= 4 THEN p_player_ids [4]
+            WHEN v_player_count >= 4 THEN p_player_ids [4]
             ELSE NULL
         END,
         -- P4

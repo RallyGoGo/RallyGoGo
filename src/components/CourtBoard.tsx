@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
 import { supabase, Match } from '../lib/supabase';
+import { useState, useMemo, useEffect } from 'react';
 // Services
 import { calculatePriorityScore, generateV83Match } from '../services/matchingSystem';
 import { logger } from '../utils/logger';
@@ -28,6 +28,36 @@ interface CourtBoardProps {
     matches: Match[]; // Using the raw Match type from supabase, but we know it's enriched if coming from useRallyData
     queue: AppQueueItem[]; // Using refined type
 }
+
+// Helper Component: Countdown Timer
+const CountdownTimer = ({ targetDate }: { targetDate: string }) => {
+    const [timeLeft, setTimeLeft] = useState('');
+    const [isExpired, setIsExpired] = useState(false);
+
+    useEffect(() => {
+        const calculateTimeLeft = () => {
+            const difference = new Date(targetDate).getTime() - new Date().getTime();
+            if (difference > 0) {
+                const minutes = Math.floor((difference / 1000 / 60) % 60);
+                const seconds = Math.floor((difference / 1000) % 60);
+                setTimeLeft(`${minutes}:${seconds < 10 ? '0' : ''}${seconds}`);
+            } else {
+                setTimeLeft('마감');
+                setIsExpired(true);
+            }
+        };
+
+        calculateTimeLeft();
+        const timer = setInterval(calculateTimeLeft, 1000);
+        return () => clearInterval(timer);
+    }, [targetDate]);
+
+    return (
+        <div className={`text-xs font-bold px-2 py-1 rounded bg-slate-900 border ${isExpired ? 'text-slate-500 border-slate-700' : 'text-amber-400 border-amber-500/50 animate-pulse'}`}>
+            bets: {timeLeft}
+        </div>
+    );
+};
 
 export default function CourtBoard({ user, matches, queue }: CourtBoardProps) {
     // V3: Matches and Queue are now passed as props from useRallyData (Centralized)
@@ -436,6 +466,13 @@ export default function CourtBoard({ user, matches, queue }: CourtBoardProps) {
                         <div className="absolute top-4 left-4 bg-slate-700 px-3 py-1 rounded-md text-xs font-bold text-slate-300">{courtName}</div>
                         {courtName !== 'Court A' && courtName !== 'Court B' && (
                             <button onClick={() => handleRemoveCourt(courtName)} className="absolute top-4 right-4 text-slate-500 hover:text-rose-500 hover:bg-rose-500/10 p-1 rounded">✕</button>
+                        )}
+
+                        {/* TIMER */}
+                        {match?.status === 'PLAYING' && match.betting_closes_at && (
+                            <div className="absolute top-4 right-14">
+                                <CountdownTimer targetDate={match.betting_closes_at} />
+                            </div>
                         )}
 
                         {!match ? (
