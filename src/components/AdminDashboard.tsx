@@ -63,8 +63,8 @@ export default function AdminBoard({ onClose }: Props) {
         const { data: matches } = await supabase
             .from('matches')
             .select('*')
-            // V3 uses SCORING for awaiting confirmation (not PENDING)
-            .in('status', ['FINISHED', 'SCORING', 'DISPUTED'])
+            // V3 uses SCORING for awaiting confirmation, and PENDING for court-released waiting
+            .in('status', ['FINISHED', 'SCORING', 'DISPUTED', 'PENDING'])
             .order('end_time', { ascending: false })
             .limit(50);
 
@@ -461,7 +461,8 @@ export default function AdminBoard({ onClose }: Props) {
                                     <div className="flex items-center gap-4 w-full md:w-auto justify-between md:justify-start">
 
                                         {/* 상태 뱃지 */}
-                                        {m.status === 'SCORING' && <span className="bg-amber-500 text-slate-900 text-[10px] px-2 py-0.5 rounded font-black animate-pulse whitespace-nowrap">⏳ 승인 대기</span>}
+                                        {m.status === 'SCORING' && <span className="bg-amber-500 text-slate-900 text-[10px] px-2 py-0.5 rounded font-black animate-pulse whitespace-nowrap">⏳ 점수 입력 중</span>}
+                                        {m.status === 'PENDING' && <span className="bg-lime-500 text-slate-900 text-[10px] px-2 py-0.5 rounded font-black animate-pulse whitespace-nowrap">⏳ 승인 대기</span>}
                                         {m.status === 'DISPUTED' && <span className="bg-rose-500 text-white text-[10px] px-2 py-0.5 rounded font-black animate-pulse whitespace-nowrap">🚨 분쟁 중</span>}
 
                                         <div className="text-right">
@@ -482,7 +483,7 @@ export default function AdminBoard({ onClose }: Props) {
                                             <p className="text-xs text-slate-600">{m.end_time ? new Date(m.end_time).toLocaleDateString() : '-'}</p>
                                         </div>
 
-                                        {m.status === 'SCORING' || m.status === 'DISPUTED' ? (
+                                        {m.status === 'SCORING' || m.status === 'DISPUTED' || m.status === 'PENDING' ? (
                                             <>
                                                 <button onClick={() => adminConfirmMatch(m.id)} className="bg-lime-600 hover:bg-lime-500 text-white px-3 py-2 rounded-lg text-xs font-bold shadow-lg border border-lime-400 transition-all whitespace-nowrap">
                                                     ⚡ 강제 승인
