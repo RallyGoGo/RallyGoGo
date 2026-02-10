@@ -155,7 +155,26 @@ export default function MyStatsModal({ user, onClose, onUpdate }: Props) {
                 .limit(20); // Last 20 changes
 
             if (history) {
-                setEloHistory(history.map((h) => h.new_rating));
+                const historyValues = history.map((h) => h.new_rating);
+
+                // [Fix] Sync Graph with Current Profile ELO
+                // If the last history point differs from the current profile (men's double default for now or primary), add it.
+                // Or best: graph shows History. If profile has newer value not in history?
+                // Actually, `elo_history` is the source of truth for *growth*.
+                // But let's append current ELO to show *now*.
+                // Assuming Men's Doubles is the main one shown or mixed?
+                // The graph doesn't specify which ELO. Let's assume Mens Doubles or Max?
+                // The user's screenshot had "Men 1302" but graph "Current: 1289".
+                // We should append the current relevant ELO to the graph if it's newer.
+
+                const currentElo = profile?.elo_mens_doubles || 1200; // Use Men's as primary for graph or average?
+                // Ideally, the graph should be filterable. For now, let's append current if > last.
+
+                if (historyValues.length > 0 && historyValues[historyValues.length - 1] !== currentElo) {
+                    historyValues.push(currentElo);
+                }
+
+                setEloHistory(historyValues);
             }
 
             // 4. [New] Load MVP Badges

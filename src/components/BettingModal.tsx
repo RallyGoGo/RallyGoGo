@@ -193,32 +193,22 @@ export default function BettingModal({ isOpen, onClose, myId }: Props) {
         };
     }, [isOpen, activeTab]);
 
+    const [selectedMatchForBet, setSelectedMatchForBet] = useState<{ match: BettingMatch, pick: 'TEAM_1' | 'TEAM_2' } | null>(null);
+    const [betAmount, setBetAmount] = useState<number>(100);
+
     // Place bet using parimutuel system
-    const handleBet = async (m: BettingMatch, pick: 'TEAM_1' | 'TEAM_2') => {
-        const currentOdds = pick === 'TEAM_1' ? (m.pool?.team1_odds || 2.0) : (m.pool?.team2_odds || 2.0);
-        const poolTotal = (m.pool?.team1_total || 0) + (m.pool?.team2_total || 0);
+    const executeBet = async () => {
+        if (!selectedMatchForBet) return;
+        const { match, pick } = selectedMatchForBet;
+        const amount = betAmount;
 
-        const input = prompt(
-            `[${pick === 'TEAM_1' ? 'Team 1' : 'Team 2'}] 승리에 배팅하시겠습니까?\n\n` +
-            `📊 현재 풀: ${poolTotal.toLocaleString()} P\n` +
-            `💰 예상 배당률: ${currentOdds.toFixed(2)}x (변동 가능)\n` +
-            `💸 보유 포인트: ${myPoint.toLocaleString()} P\n\n` +
-            `⚠️ 패리뮤추얼 방식: 최종 배당률은 배팅 마감 시점에 결정됩니다.\n\n` +
-            `배팅할 포인트를 입력하세요:`
-        );
-        if (!input) return;
-
-        const amount = parseInt(input, 10);
-        if (isNaN(amount) || amount <= 0) return alert("올바른 금액을 입력하세요.");
+        if (amount <= 0) return alert("올바른 금액을 입력하세요.");
         if (amount > myPoint) return alert("보유 포인트가 부족합니다.");
-        if (amount > 10000) return alert("최대 배팅 금액은 10,000 P입니다.");
-
-        if (!confirm(`${amount} 포인트를 배팅하시겠습니까?\n\n※ 패리뮤추얼 방식으로 운영됩니다.\n(최종 배당률은 경기 시작 시 확정)`)) return;
 
         setPlacing(true);
         try {
             const { data, error } = await supabase.rpc('place_bet_parimutuel', {
-                p_match_id: m.id,
+                p_match_id: match.id,
                 p_pick_team: pick,
                 p_amount: amount
             });
@@ -228,8 +218,9 @@ export default function BettingModal({ isOpen, onClose, myId }: Props) {
             type BetResponse = { success: boolean; error?: string; message?: string; new_balance?: number; team1_odds?: number; team2_odds?: number };
             const response = data as BetResponse;
 
-            if (!response.success) {
-                throw new Error(response.error || response.message || '배팅 실패');
+            if (![true, 'true'].includes(response.success as any)) {
+                if (response.error) throw new Error(response.error);
+                throw new Error(response.message || '배팅 실패');
             }
 
             alert(`✅ 배팅 성공!\n\n현재 배당률: ${pick === 'TEAM_1' ? response.team1_odds?.toFixed(2) : response.team2_odds?.toFixed(2)}x\n잔액: ${response.new_balance?.toLocaleString()} P`);
@@ -237,11 +228,17 @@ export default function BettingModal({ isOpen, onClose, myId }: Props) {
             // Refresh data
             void fetchMyPoint();
             void fetchDraftMatches();
+            setSelectedMatchForBet(null);
         } catch (e: unknown) {
             const err = e as { message?: string };
             alert("🚨 배팅 실패: " + (err.message || JSON.stringify(e)));
         }
         setPlacing(false);
+    };
+
+    const handleBetClick = (m: BettingMatch, pick: 'TEAM_1' | 'TEAM_2') => {
+        setSelectedMatchForBet({ match: m, pick });
+        setBetAmount(100); // Default
     };
 
     if (!isOpen) return null;
@@ -309,11 +306,10 @@ export default function BettingModal({ isOpen, onClose, myId }: Props) {
                                                 </div>
                                             </div>
 
-                                            {/* Teams */}
                                             <div className="p-4 flex justify-between items-center gap-2">
                                                 {/* Team 1 */}
                                                 <div
-                                                    onClick={() => handleBet(m, 'TEAM_1')}
+                                                    onClick={() => handleBetClick(m, 'TEAM_1')}
                                                     className="flex-1 text-center bg-slate-700/30 hover:bg-lime-900/30 rounded-lg p-3 cursor-pointer transition-all active:scale-95 border border-transparent hover:border-lime-500/50"
                                                 >
                                                     <p className="text-xs text-slate-400 mb-1">{m.p1_name || 'Player 1'}</p>
@@ -325,7 +321,7 @@ export default function BettingModal({ isOpen, onClose, myId }: Props) {
 
                                                 {/* Team 2 */}
                                                 <div
-                                                    onClick={() => handleBet(m, 'TEAM_2')}
+                                                    onClick={() => handleBetClick(m, 'TEAM_2')}
                                                     className="flex-1 text-center bg-slate-700/30 hover:bg-rose-900/30 rounded-lg p-3 cursor-pointer transition-all active:scale-95 border border-transparent hover:border-rose-500/50"
                                                 >
                                                     <p className="text-xs text-slate-400 mb-1">{m.p3_name || 'Player 3'}</p>
@@ -376,6 +372,63 @@ export default function BettingModal({ isOpen, onClose, myId }: Props) {
                         </div>
                     )}
                 </div>
+
+                {/* BETTING CONFIRMATION OVERLAY */}
+                {selectedMatchForBet && (
+                    <div className="absolute inset-0 z-20 bg-slate-900 flex flex-col p-6 animate-fadeIn">
+                        <div className="flex justify-between items-center mb-6">
+                            <h3 className="text-xl font-bold text-white">💰 배팅 금액 설정</h3>
+                            <button onClick={() => setSelectedMatchForBet(null)} className="text-slate-400 hover:text-white">✕</button>
+                        </div>
+
+                        <div className="flex-1 flex flex-col justify-center space-y-6">
+                            <div className="text-center">
+                                <p className="text-sm text-slate-400 mb-2">선택한 팀</p>
+                                <p className={`text-2xl font-black ${selectedMatchForBet.pick === 'TEAM_1' ? 'text-lime-400' : 'text-rose-400'}`}>
+                                    {selectedMatchForBet.pick === 'TEAM_1' ? 'Team 1 (Left)' : 'Team 2 (Right)'}
+                                </p>
+                            </div>
+
+                            <div className="space-y-2">
+                                <div className="flex justify-between text-xs text-slate-400">
+                                    <span>보유 포인트: {myPoint.toLocaleString()} P</span>
+                                    <span>배팅 후 잔액: {(myPoint - betAmount).toLocaleString()} P</span>
+                                </div>
+                                <input
+                                    type="number"
+                                    value={betAmount}
+                                    onChange={(e) => setBetAmount(Math.min(myPoint, Math.max(0, parseInt(e.target.value) || 0)))}
+                                    className="w-full bg-slate-800 border-2 border-yellow-500/50 rounded-xl p-4 text-center text-3xl font-black text-white focus:border-yellow-400 outline-none"
+                                />
+                            </div>
+
+                            <div className="grid grid-cols-4 gap-2">
+                                <button onClick={() => setBetAmount(prev => Math.min(myPoint, prev + 10))} className="bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 rounded-lg">+10</button>
+                                <button onClick={() => setBetAmount(prev => Math.min(myPoint, prev + 50))} className="bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 rounded-lg">+50</button>
+                                <button onClick={() => setBetAmount(prev => Math.min(myPoint, prev + 100))} className="bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 rounded-lg">+100</button>
+                                <button onClick={() => setBetAmount(myPoint)} className="bg-yellow-600/50 hover:bg-yellow-600 text-yellow-100 font-bold py-3 rounded-lg border border-yellow-500">ALL</button>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2 mt-2">
+                                <button onClick={() => setBetAmount(100)} className="bg-slate-800 text-slate-400 text-xs py-2 rounded">Reset (100)</button>
+                                <button onClick={() => setBetAmount(500)} className="bg-slate-800 text-slate-400 text-xs py-2 rounded">500 Flat</button>
+                            </div>
+
+                            <button
+                                onClick={executeBet}
+                                disabled={placing || betAmount <= 0}
+                                className="w-full py-4 bg-gradient-to-r from-yellow-500 to-amber-600 hover:from-yellow-400 hover:to-amber-500 text-black font-black text-xl rounded-xl shadow-lg disabled:opacity-50 mt-4"
+                            >
+                                {placing ? '처리 중...' : `${betAmount.toLocaleString()} P 배팅하기`}
+                            </button>
+
+                            <p className="text-[10px] text-center text-slate-500">
+                                ※ 배당률은 실시간 변동되며 경기 시작 시 확정됩니다.<br />
+                                (상대 배팅이 없을 경우 배당률이 1.01에 근접할 수 있습니다)
+                            </p>
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     );

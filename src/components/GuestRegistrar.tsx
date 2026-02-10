@@ -122,8 +122,29 @@ export default function GuestRegistrar({ onRegister, onClose }: GuestRegistrarPr
 
             if (error) throw error;
 
-            type GuestRpcResponse = { player_id: string; reused: boolean; initial_elo: number; };
-            const { player_id, reused, initial_elo } = data as GuestRpcResponse;
+            // Strict Type Check & Success Validation
+            type GuestRpcResponse = {
+                success: boolean;
+                error?: string;
+                message?: string;
+                player_id?: string;
+                reused?: boolean;
+                initial_elo?: number;
+            };
+            const rpcData = data as GuestRpcResponse;
+
+            if (!rpcData.success) {
+                // Throw error with the specific code to be caught below
+                const err = new Error(rpcData.message || 'Unknown Error');
+                // Attach code property effectively by using an object throw or custom error, 
+                // but here we can just throw the error string code if we want simple handling, 
+                // or ensure the catch block reads the message.
+                // The DB returns { error: 'DUPLICATE_QUEUE', message: '...' }
+                // Let's pass the error code in the message for parsing, or a custom object.
+                throw { message: rpcData.message, code: rpcData.error };
+            }
+
+            const { player_id, reused, initial_elo } = rpcData;
 
             if (reused) {
                 alert(`✅ 기존 게스트 프로필 사용: ${name} (G)\n(ELO 갱신됨: ${initial_elo})`);
@@ -131,16 +152,20 @@ export default function GuestRegistrar({ onRegister, onClose }: GuestRegistrarPr
                 alert(`🎉 새 게스트 등록 완료: ${name} (G) (ELO ${initial_elo})`);
             }
 
-            onRegister(player_id);
+            if (player_id) onRegister(player_id);
             onClose();
 
         } catch (err: unknown) {
             logger.error('guest.register_fail', err);
-            const msg = err instanceof Error ? err.message : (err as { message?: string })?.message || 'Unknown Error';
+
+            // Handle both Error objects and our custom { message, code } objects
+            const anyErr = err as { message?: string; code?: string };
+            const msg = anyErr.message || 'Unknown Error';
+            const code = anyErr.code || '';
 
             if (msg === 'REQUEST_TIMEOUT') {
                 alert('⏳ 요청 시간 초과. 잠시 후 다시 시도해주세요.');
-            } else if (msg.includes('DUPLICATE_QUEUE')) {
+            } else if (code === 'DUPLICATE_QUEUE' || msg.includes('DUPLICATE_QUEUE')) {
                 alert('🚫 이미 대기열에 등록된 이름입니다.');
             } else {
                 alert(`등록 실패: ${msg}`);
