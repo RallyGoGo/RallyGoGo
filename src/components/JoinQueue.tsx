@@ -314,22 +314,22 @@ export default function JoinQueue({ user, profile, queue }: JoinQueueProps) {
         <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 h-full flex flex-col justify-center animate-fadeIn relative">
 
             {/* Guest Registration & Remove Buttons */}
-            <div className="absolute top-4 right-4 flex gap-1">
-                <button
-                    onClick={() => setShowGuestRemove(!showGuestRemove)}
-                    className="text-xs bg-rose-900/50 text-rose-300 px-2 py-1 rounded border border-rose-500/30 hover:bg-rose-800 transition-colors"
-                >
-                    🗑 게스트 삭제
-                </button>
+            <div className="absolute top-4 right-4 flex flex-col gap-2 items-end z-10">
                 <button
                     onClick={() => setShowGuestReg(true)}
-                    className="text-xs bg-indigo-900/50 text-indigo-300 px-2 py-1 rounded border border-indigo-500/30 hover:bg-indigo-800 transition-colors"
+                    className="text-xs bg-indigo-900/50 text-indigo-300 px-2.5 py-1.5 rounded-lg border border-indigo-500/30 hover:bg-indigo-800 transition-colors shadow-lg"
                 >
                     ⚡ 게스트 등록
                 </button>
+                <button
+                    onClick={() => setShowGuestRemove(!showGuestRemove)}
+                    className="text-[10px] bg-rose-900/50 text-rose-300 px-2 py-1 rounded border border-rose-500/30 hover:bg-rose-800 transition-colors"
+                >
+                    🗑 게스트 삭제
+                </button>
             </div>
 
-            <h3 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
+            <h3 className="text-xl font-bold text-white mb-6 flex items-center gap-2 pr-24">
                 <span>🏃</span> {isInQueue && !isEditing ? '내 대기 상태' : '매치 대기 등록'}
             </h3>
 
