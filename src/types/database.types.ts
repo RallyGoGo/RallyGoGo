@@ -736,10 +736,14 @@ export type Database = {
       update_queue_departure_time: {
         Args: {
           p_queue_id: string;
-          p_new_time: string;
+          p_departure_time: string;
         };
-        Returns: boolean;
+        Returns: { success: boolean; error?: string };
       };
+      remove_guest_from_queue: {
+        Args: { p_guest_id: string }
+        Returns: Json
+      }
       check_and_reset_daily: {
         Args: Record<PropertyKey, never>;
         Returns: boolean;

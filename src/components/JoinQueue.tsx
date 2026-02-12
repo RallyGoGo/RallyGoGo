@@ -105,8 +105,7 @@ export default function JoinQueue({ user, profile }: JoinQueueProps) {
 
         setGuestLoading(true);
         try {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const { data, error } = await (supabase.rpc as any)('remove_guest_from_queue', {
+            const { data, error } = await supabase.rpc('remove_guest_from_queue', {
                 p_guest_id: guestId
             });
 
