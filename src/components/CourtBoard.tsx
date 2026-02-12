@@ -468,230 +468,228 @@ export default function CourtBoard({ user, matches, queue }: CourtBoardProps) {
                         <button className="bg-white text-orange-600 font-black px-4 py-2 rounded-xl shadow-md text-sm">Review Now</button>
                     )}
                 </div>
-                </div>
-    )
-}
+            )}
 
-{/* 📋 Pending Matches List (Visible to everyone, Admin can act via Dashboard, Players via Banner) */ }
-{
-    pendingMatches.length > 0 && !pendingReviewMatch && (
-        <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-4 mb-4">
-            <h3 className="text-xs font-bold text-slate-400 uppercase mb-2">⏳ Pending Confirmation ({pendingMatches.length})</h3>
-            <div className="space-y-2">
-                {pendingMatches.map(m => (
-                    <div key={m.id} className="flex justify-between items-center bg-slate-900/50 p-2 rounded border border-slate-700">
-                        <span className="text-xs text-slate-300 font-bold max-w-[200px] truncate">
-                            {m.p1_name}/{m.p2_name} vs {m.p3_name}/{m.p4_name}
-                        </span>
-                        <span className="text-xs font-mono text-amber-500 font-bold">{m.score_team1}:{m.score_team2}</span>
-                    </div>
-                ))}
-            </div>
-        </div>
-    )
-}
-
-{
-    courts.map((courtName) => {
-        const match = activeMatches.find(m => m.court_name === courtName);
-        const myTeam = user ? getMyTeam(match, user.id) : 0;
-        const reporterTeam = match?.reported_by ? getMyTeam(match, match.reported_by) : 0;
-        const isReporter = user && match?.reported_by === user.id;
-        const isOpponent = myTeam !== 0 && myTeam !== reporterTeam && match?.status === 'PENDING';
-
-        // STYLING: Restore V8.3 Aesthetics
-        let containerClass = 'bg-white/5 border-white/10';
-        if (match?.status === 'PLAYING') containerClass = 'bg-lime-900/20 border-lime-500/30';
-        else if (match?.status === 'DRAFT') containerClass = 'bg-amber-900/20 border-amber-500/30';
-        else if (match?.status === 'SCORING') containerClass = 'bg-cyan-900/20 border-cyan-500/30';
-
-        return (
-            <div key={courtName} className={`relative p-6 backdrop-blur-md border rounded-2xl shadow-lg flex flex-col items-center justify-center min-h-[260px] transition-all ${containerClass}`}>
-                <div className="absolute top-4 left-4 bg-slate-700 px-3 py-1 rounded-md text-xs font-bold text-slate-300">{courtName}</div>
-                {courtName !== 'Court A' && courtName !== 'Court B' && (
-                    <button onClick={() => handleRemoveCourt(courtName)} className="absolute top-4 right-4 text-slate-500 hover:text-rose-500 hover:bg-rose-500/10 p-1 rounded">✕</button>
-                )}
-
-                {/* TIMER */}
-                {match?.status === 'PLAYING' && match.betting_closes_at && (
-                    <div className="absolute top-4 right-14">
-                        <CountdownTimer targetDate={match.betting_closes_at} />
-                    </div>
-                )}
-
-                {!match ? (
-                    <div className="text-center flex flex-col gap-3">
-                        <p className="text-slate-500">Empty</p>
-                        <div className="flex gap-2">
-                            <button onClick={() => handleAutoMatch(courtName)} disabled={loading} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white font-bold rounded-lg shadow-lg border border-slate-500 disabled:opacity-50 text-sm">🤖 Auto</button>
-                            <button onClick={() => openManualModal(courtName)} disabled={loading} className="px-4 py-2 bg-lime-700 hover:bg-lime-600 text-white font-bold rounded-lg shadow-lg border border-lime-500 disabled:opacity-50 text-sm">👆 Manual</button>
+            {/* 📋 Pending Matches List (Visible to everyone, Admin can act via Dashboard, Players via Banner) */}
+            {
+                pendingMatches.length > 0 && !pendingReviewMatch && (
+                    <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-4 mb-4">
+                        <h3 className="text-xs font-bold text-slate-400 uppercase mb-2">⏳ Pending Confirmation ({pendingMatches.length})</h3>
+                        <div className="space-y-2">
+                            {pendingMatches.map(m => (
+                                <div key={m.id} className="flex justify-between items-center bg-slate-900/50 p-2 rounded border border-slate-700">
+                                    <span className="text-xs text-slate-300 font-bold max-w-[200px] truncate">
+                                        {m.p1_name}/{m.p2_name} vs {m.p3_name}/{m.p4_name}
+                                    </span>
+                                    <span className="text-xs font-mono text-amber-500 font-bold">{m.score_team1}:{m.score_team2}</span>
+                                </div>
+                            ))}
                         </div>
                     </div>
-                ) : match.status === 'PENDING' ? (
-                    <div className="text-center w-full animate-pulse">
-                        <p className="text-lg font-bold text-amber-400 mb-2">⏳ Confirmation Pending</p>
-                        <div className="text-white text-2xl font-black mb-4 tracking-widest">{match.score_team1} : {match.score_team2}</div>
-                        {isReporter ? (
-                            <div className="text-slate-400 text-sm bg-slate-800/50 p-2 rounded">Waiting for opponent...</div>
-                        ) : isOpponent ? (
-                            <div className="flex gap-2 justify-center">
-                                <button onClick={() => handleConfirmMatch(match.id)} disabled={loading} className="px-6 py-2 bg-lime-600 text-white font-bold rounded-xl shadow-lg">✅ Confirm</button>
-                                <button onClick={() => handleRejectMatch(match.id)} disabled={loading} className="px-6 py-2 bg-rose-600 text-white font-bold rounded-xl shadow-lg">⛔ Reject</button>
-                            </div>
-                        ) : (
-                            <div className="text-slate-500 text-xs">Verification in progress...</div>
-                        )}
-                    </div>
-                ) : match.status === 'SCORING' ? (
-                    <div className="text-center w-full">
-                        <p className="text-xl font-bold text-cyan-400 mb-4">✍️ 점수 입력</p>
+                )
+            }
 
-                        {/* Team Labels + Score Inputs */}
-                        <div className="flex items-stretch justify-center gap-4 mb-6">
-                            {/* Team 1 */}
-                            <div className="flex-1 bg-lime-900/20 border border-lime-500/30 rounded-xl p-3">
-                                <div className="text-lime-400 text-xs font-bold mb-2">🟢 Team 1</div>
-                                <div className="text-white text-xs mb-2 truncate">{match.p1_name}</div>
-                                <div className="text-white text-xs mb-3 truncate">{match.p2_name}</div>
-                                <input
-                                    type="number"
-                                    min="0"
-                                    max="99"
-                                    className="w-full h-12 bg-slate-800 border border-lime-500/50 rounded text-center text-2xl text-lime-400 font-bold focus:outline-none focus:border-lime-400"
-                                    value={scores[match.id]?.t1 || ''}
-                                    onChange={(e) => handleScoreChange(match.id, 't1', e.target.value)}
-                                />
-                            </div>
+            {
+                courts.map((courtName) => {
+                    const match = activeMatches.find(m => m.court_name === courtName);
+                    const myTeam = user ? getMyTeam(match, user.id) : 0;
+                    const reporterTeam = match?.reported_by ? getMyTeam(match, match.reported_by) : 0;
+                    const isReporter = user && match?.reported_by === user.id;
+                    const isOpponent = myTeam !== 0 && myTeam !== reporterTeam && match?.status === 'PENDING';
 
-                            <div className="flex items-center">
-                                <span className="text-slate-500 font-black text-2xl">:</span>
-                            </div>
+                    // STYLING: Restore V8.3 Aesthetics
+                    let containerClass = 'bg-white/5 border-white/10';
+                    if (match?.status === 'PLAYING') containerClass = 'bg-lime-900/20 border-lime-500/30';
+                    else if (match?.status === 'DRAFT') containerClass = 'bg-amber-900/20 border-amber-500/30';
+                    else if (match?.status === 'SCORING') containerClass = 'bg-cyan-900/20 border-cyan-500/30';
 
-                            {/* Team 2 */}
-                            <div className="flex-1 bg-rose-900/20 border border-rose-500/30 rounded-xl p-3">
-                                <div className="text-rose-400 text-xs font-bold mb-2">🔴 Team 2</div>
-                                <div className="text-white text-xs mb-2 truncate">{match.p3_name}</div>
-                                <div className="text-white text-xs mb-3 truncate">{match.p4_name}</div>
-                                <input
-                                    type="number"
-                                    min="0"
-                                    max="99"
-                                    className="w-full h-12 bg-slate-800 border border-rose-500/50 rounded text-center text-2xl text-rose-400 font-bold focus:outline-none focus:border-rose-400"
-                                    value={scores[match.id]?.t2 || ''}
-                                    onChange={(e) => handleScoreChange(match.id, 't2', e.target.value)}
-                                />
-                            </div>
-                        </div>
+                    return (
+                        <div key={courtName} className={`relative p-6 backdrop-blur-md border rounded-2xl shadow-lg flex flex-col items-center justify-center min-h-[260px] transition-all ${containerClass}`}>
+                            <div className="absolute top-4 left-4 bg-slate-700 px-3 py-1 rounded-md text-xs font-bold text-slate-300">{courtName}</div>
+                            {courtName !== 'Court A' && courtName !== 'Court B' && (
+                                <button onClick={() => handleRemoveCourt(courtName)} className="absolute top-4 right-4 text-slate-500 hover:text-rose-500 hover:bg-rose-500/10 p-1 rounded">✕</button>
+                            )}
 
-                        <button onClick={() => handleSubmitScore(match.id)} disabled={loading} className="px-6 py-2 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-lg shadow-lg">제출</button>
-                    </div>
-                ) : (
-                    <div className="text-center w-full">
-                        <div className={`font-bold text-xl mb-4 ${match.status === 'PLAYING' ? 'text-lime-400 animate-pulse' : 'text-amber-400'}`}>
-                            {match.status === 'PLAYING' ? '🎾 경기 진행중' : '📋 매치 제안'}
-                        </div>
+                            {/* TIMER */}
+                            {match?.status === 'PLAYING' && match.betting_closes_at && (
+                                <div className="absolute top-4 right-14">
+                                    <CountdownTimer targetDate={match.betting_closes_at} />
+                                </div>
+                            )}
 
-                        {/* Team-based Layout */}
-                        <div className="flex gap-3 w-full mb-6">
-                            {/* Team 1 */}
-                            <div className="flex-1 bg-lime-900/20 border border-lime-500/40 rounded-xl p-3">
-                                <div className="text-lime-400 text-xs font-bold mb-3">🟢 Team 1</div>
-                                {[{ id: 'player_1', n: match.p1_name, uid: match.player_1 }, { id: 'player_2', n: match.p2_name, uid: match.player_2 }].map((p, i) => (
-                                    p.uid ? (
-                                        <div key={i} className="bg-slate-800 p-2 rounded border border-lime-500/30 mb-2 flex items-center justify-between group relative">
-                                            <span className="text-sm text-white truncate">{p.n}</span>
-                                            <button onClick={() => openSwapModal(match.id, p.id, p.n, p.uid!)} className="text-[10px] bg-slate-600 hover:bg-lime-500 text-white px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-all">🔄</button>
+                            {!match ? (
+                                <div className="text-center flex flex-col gap-3">
+                                    <p className="text-slate-500">Empty</p>
+                                    <div className="flex gap-2">
+                                        <button onClick={() => handleAutoMatch(courtName)} disabled={loading} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white font-bold rounded-lg shadow-lg border border-slate-500 disabled:opacity-50 text-sm">🤖 Auto</button>
+                                        <button onClick={() => openManualModal(courtName)} disabled={loading} className="px-4 py-2 bg-lime-700 hover:bg-lime-600 text-white font-bold rounded-lg shadow-lg border border-lime-500 disabled:opacity-50 text-sm">👆 Manual</button>
+                                    </div>
+                                </div>
+                            ) : match.status === 'PENDING' ? (
+                                <div className="text-center w-full animate-pulse">
+                                    <p className="text-lg font-bold text-amber-400 mb-2">⏳ Confirmation Pending</p>
+                                    <div className="text-white text-2xl font-black mb-4 tracking-widest">{match.score_team1} : {match.score_team2}</div>
+                                    {isReporter ? (
+                                        <div className="text-slate-400 text-sm bg-slate-800/50 p-2 rounded">Waiting for opponent...</div>
+                                    ) : isOpponent ? (
+                                        <div className="flex gap-2 justify-center">
+                                            <button onClick={() => handleConfirmMatch(match.id)} disabled={loading} className="px-6 py-2 bg-lime-600 text-white font-bold rounded-xl shadow-lg">✅ Confirm</button>
+                                            <button onClick={() => handleRejectMatch(match.id)} disabled={loading} className="px-6 py-2 bg-rose-600 text-white font-bold rounded-xl shadow-lg">⛔ Reject</button>
                                         </div>
-                                    ) : null
+                                    ) : (
+                                        <div className="text-slate-500 text-xs">Verification in progress...</div>
+                                    )}
+                                </div>
+                            ) : match.status === 'SCORING' ? (
+                                <div className="text-center w-full">
+                                    <p className="text-xl font-bold text-cyan-400 mb-4">✍️ 점수 입력</p>
+
+                                    {/* Team Labels + Score Inputs */}
+                                    <div className="flex items-stretch justify-center gap-4 mb-6">
+                                        {/* Team 1 */}
+                                        <div className="flex-1 bg-lime-900/20 border border-lime-500/30 rounded-xl p-3">
+                                            <div className="text-lime-400 text-xs font-bold mb-2">🟢 Team 1</div>
+                                            <div className="text-white text-xs mb-2 truncate">{match.p1_name}</div>
+                                            <div className="text-white text-xs mb-3 truncate">{match.p2_name}</div>
+                                            <input
+                                                type="number"
+                                                min="0"
+                                                max="99"
+                                                className="w-full h-12 bg-slate-800 border border-lime-500/50 rounded text-center text-2xl text-lime-400 font-bold focus:outline-none focus:border-lime-400"
+                                                value={scores[match.id]?.t1 || ''}
+                                                onChange={(e) => handleScoreChange(match.id, 't1', e.target.value)}
+                                            />
+                                        </div>
+
+                                        <div className="flex items-center">
+                                            <span className="text-slate-500 font-black text-2xl">:</span>
+                                        </div>
+
+                                        {/* Team 2 */}
+                                        <div className="flex-1 bg-rose-900/20 border border-rose-500/30 rounded-xl p-3">
+                                            <div className="text-rose-400 text-xs font-bold mb-2">🔴 Team 2</div>
+                                            <div className="text-white text-xs mb-2 truncate">{match.p3_name}</div>
+                                            <div className="text-white text-xs mb-3 truncate">{match.p4_name}</div>
+                                            <input
+                                                type="number"
+                                                min="0"
+                                                max="99"
+                                                className="w-full h-12 bg-slate-800 border border-rose-500/50 rounded text-center text-2xl text-rose-400 font-bold focus:outline-none focus:border-rose-400"
+                                                value={scores[match.id]?.t2 || ''}
+                                                onChange={(e) => handleScoreChange(match.id, 't2', e.target.value)}
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <button onClick={() => handleSubmitScore(match.id)} disabled={loading} className="px-6 py-2 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-lg shadow-lg">제출</button>
+                                </div>
+                            ) : (
+                                <div className="text-center w-full">
+                                    <div className={`font-bold text-xl mb-4 ${match.status === 'PLAYING' ? 'text-lime-400 animate-pulse' : 'text-amber-400'}`}>
+                                        {match.status === 'PLAYING' ? '🎾 경기 진행중' : '📋 매치 제안'}
+                                    </div>
+
+                                    {/* Team-based Layout */}
+                                    <div className="flex gap-3 w-full mb-6">
+                                        {/* Team 1 */}
+                                        <div className="flex-1 bg-lime-900/20 border border-lime-500/40 rounded-xl p-3">
+                                            <div className="text-lime-400 text-xs font-bold mb-3">🟢 Team 1</div>
+                                            {[{ id: 'player_1', n: match.p1_name, uid: match.player_1 }, { id: 'player_2', n: match.p2_name, uid: match.player_2 }].map((p, i) => (
+                                                p.uid ? (
+                                                    <div key={i} className="bg-slate-800 p-2 rounded border border-lime-500/30 mb-2 flex items-center justify-between group relative">
+                                                        <span className="text-sm text-white truncate">{p.n}</span>
+                                                        <button onClick={() => openSwapModal(match.id, p.id, p.n, p.uid!)} className="text-[10px] bg-slate-600 hover:bg-lime-500 text-white px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-all">🔄</button>
+                                                    </div>
+                                                ) : null
+                                            ))}
+                                        </div>
+
+                                        <div className="flex items-center">
+                                            <span className="text-slate-500 font-black text-lg">VS</span>
+                                        </div>
+
+                                        {/* Team 2 */}
+                                        <div className="flex-1 bg-rose-900/20 border border-rose-500/40 rounded-xl p-3">
+                                            <div className="text-rose-400 text-xs font-bold mb-3">🔴 Team 2</div>
+                                            {[{ id: 'player_3', n: match.p3_name, uid: match.player_3 }, { id: 'player_4', n: match.p4_name, uid: match.player_4 }].map((p, i) => (
+                                                p.uid ? (
+                                                    <div key={i} className="bg-slate-800 p-2 rounded border border-rose-500/30 mb-2 flex items-center justify-between group relative">
+                                                        <span className="text-sm text-white truncate">{p.n}</span>
+                                                        <button onClick={() => openSwapModal(match.id, p.id, p.n, p.uid!)} className="text-[10px] bg-slate-600 hover:bg-rose-500 text-white px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-all">🔄</button>
+                                                    </div>
+                                                ) : null
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    {match.status === 'DRAFT' && (
+                                        <div className="flex gap-3 w-full">
+                                            <button onClick={() => handleStartGame(match.id)} className="flex-[2] py-3 bg-lime-600 hover:bg-lime-500 text-white font-bold rounded-xl shadow-lg">▶️ 게임 시작</button>
+                                            <button onClick={() => handleCancelMatch(match.id)} className="flex-[1] py-3 bg-rose-700/80 hover:bg-rose-600 text-white font-bold rounded-xl shadow-lg border border-rose-500/30">🚫 취소</button>
+                                        </div>
+                                    )}
+                                    {match.status === 'PLAYING' && <button onClick={() => handleEndGame(match.id)} className="px-4 py-2 bg-rose-500/20 text-rose-400 text-sm font-bold rounded-lg border border-rose-500/50 hover:bg-rose-500 hover:text-white transition-all">⏹ 게임 종료</button>}
+                                </div>
+                            )}
+                        </div>
+                    );
+                })
+            }
+
+            <button onClick={handleAddCourt} className="w-full h-14 border-2 border-dashed border-slate-700 hover:border-lime-500/50 rounded-2xl flex items-center justify-center text-slate-500 hover:text-lime-400 font-bold transition-all group">
+                <span className="text-2xl mr-2 group-hover:scale-125 transition-transform">+</span> <span>Add Court</span>
+            </button>
+
+            {/* MANUAL MODAL */}
+            {
+                isManualModalOpen && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+                        <div className="bg-slate-800 border border-slate-600 rounded-2xl w-full max-w-md max-h-[80vh] flex flex-col shadow-2xl">
+                            <div className="p-4 border-b border-slate-700 flex justify-between items-center"><h3 className="text-white font-bold text-lg">👆 Manual ({selectedManualPlayers.length})</h3><button onClick={() => setIsManualModalOpen(false)} className="text-slate-400 hover:text-white">✕</button></div>
+                            <div className="p-4 border-b border-slate-900/50"><input type="text" placeholder="Search..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-slate-800 border border-slate-600 text-white p-2 rounded-lg outline-none" autoFocus /></div>
+                            <div className="overflow-y-auto flex-1 p-2 space-y-1">
+                                {filteredCandidates.map((c) => {
+                                    const idx = selectedManualPlayers.findIndex(p => p.player_id === c.player_id); const isSel = idx !== -1;
+                                    return (<button key={c.player_id} onClick={() => toggleManualSelection(c)} className={`w-full flex justify-between p-3 rounded-xl border ${isSel ? 'bg-lime-500/20 border-lime-500/50' : 'hover:bg-slate-700 border-transparent'}`}><div className="flex gap-3"><span className={`w-6 h-6 rounded-full flex center text-xs font-bold ${isSel ? 'bg-lime-500 text-slate-900' : 'bg-slate-700 text-slate-300'}`}>{isSel ? idx + 1 : '-'}</span><p className="text-white font-bold text-sm">{c.profiles?.name} {c.profiles?.is_guest && '(G)'}</p></div></button>);
+                                })}
+                            </div>
+                            <div className="p-4 border-t border-slate-700">
+                                <div className="text-xs text-slate-400 mb-2 text-center">{selectedManualPlayers.length === 2 ? "Singles Match (1vs1)" : selectedManualPlayers.length === 4 ? "Doubles Match (2vs2)" : "Select 2 or 4 players"}</div>
+                                <button onClick={confirmManualMatch} disabled={selectedManualPlayers.length !== 4 && selectedManualPlayers.length !== 2} className="w-full py-3 bg-lime-600 hover:bg-lime-500 text-white font-bold rounded-xl shadow-lg disabled:opacity-50">Create Match</button>
+                            </div>
+                        </div>
+                    </div>
+                )
+            }
+
+            {/* SWAP MODAL */}
+            {
+                isSwapModalOpen && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+                        <div className="bg-slate-800 border border-slate-600 rounded-2xl w-full max-w-md max-h-[80vh] flex flex-col shadow-2xl">
+                            <div className="p-4 border-b border-slate-700 flex justify-between items-center"><h3 className="text-white font-bold text-lg">Swap Player</h3><button onClick={() => setIsSwapModalOpen(false)} className="text-slate-400 hover:text-white">✕</button></div>
+                            <div className="p-4 border-b border-slate-900/50"><input type="text" placeholder="Search..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-slate-800 border border-slate-600 text-white p-2 rounded-lg outline-none" autoFocus /></div>
+                            <div className="overflow-y-auto flex-1 p-2 space-y-1">
+                                {filteredCandidates.map((c) => (
+                                    <button key={c.player_id} onClick={() => handleExecuteSwap(c)} className="w-full flex justify-between p-3 rounded-xl hover:bg-lime-500/20 border border-transparent"><div className="flex gap-3"><p className="text-white font-bold text-sm">{c.profiles?.name}</p></div><span className="text-xs bg-slate-700 text-slate-300 px-2 py-1 rounded">Select</span></button>
                                 ))}
                             </div>
-
-                            <div className="flex items-center">
-                                <span className="text-slate-500 font-black text-lg">VS</span>
-                            </div>
-
-                            {/* Team 2 */}
-                            <div className="flex-1 bg-rose-900/20 border border-rose-500/40 rounded-xl p-3">
-                                <div className="text-rose-400 text-xs font-bold mb-3">🔴 Team 2</div>
-                                {[{ id: 'player_3', n: match.p3_name, uid: match.player_3 }, { id: 'player_4', n: match.p4_name, uid: match.player_4 }].map((p, i) => (
-                                    p.uid ? (
-                                        <div key={i} className="bg-slate-800 p-2 rounded border border-rose-500/30 mb-2 flex items-center justify-between group relative">
-                                            <span className="text-sm text-white truncate">{p.n}</span>
-                                            <button onClick={() => openSwapModal(match.id, p.id, p.n, p.uid!)} className="text-[10px] bg-slate-600 hover:bg-rose-500 text-white px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-all">🔄</button>
-                                        </div>
-                                    ) : null
-                                ))}
-                            </div>
                         </div>
-
-                        {match.status === 'DRAFT' && (
-                            <div className="flex gap-3 w-full">
-                                <button onClick={() => handleStartGame(match.id)} className="flex-[2] py-3 bg-lime-600 hover:bg-lime-500 text-white font-bold rounded-xl shadow-lg">▶️ 게임 시작</button>
-                                <button onClick={() => handleCancelMatch(match.id)} className="flex-[1] py-3 bg-rose-700/80 hover:bg-rose-600 text-white font-bold rounded-xl shadow-lg border border-rose-500/30">🚫 취소</button>
-                            </div>
-                        )}
-                        {match.status === 'PLAYING' && <button onClick={() => handleEndGame(match.id)} className="px-4 py-2 bg-rose-500/20 text-rose-400 text-sm font-bold rounded-lg border border-rose-500/50 hover:bg-rose-500 hover:text-white transition-all">⏹ 게임 종료</button>}
                     </div>
-                )}
-            </div>
-        );
-    })
-}
+                )
+            }
 
-<button onClick={handleAddCourt} className="w-full h-14 border-2 border-dashed border-slate-700 hover:border-lime-500/50 rounded-2xl flex items-center justify-center text-slate-500 hover:text-lime-400 font-bold transition-all group">
-    <span className="text-2xl mr-2 group-hover:scale-125 transition-transform">+</span> <span>Add Court</span>
-</button>
-
-{/* MANUAL MODAL */ }
-{
-    isManualModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-            <div className="bg-slate-800 border border-slate-600 rounded-2xl w-full max-w-md max-h-[80vh] flex flex-col shadow-2xl">
-                <div className="p-4 border-b border-slate-700 flex justify-between items-center"><h3 className="text-white font-bold text-lg">👆 Manual ({selectedManualPlayers.length})</h3><button onClick={() => setIsManualModalOpen(false)} className="text-slate-400 hover:text-white">✕</button></div>
-                <div className="p-4 border-b border-slate-900/50"><input type="text" placeholder="Search..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-slate-800 border border-slate-600 text-white p-2 rounded-lg outline-none" autoFocus /></div>
-                <div className="overflow-y-auto flex-1 p-2 space-y-1">
-                    {filteredCandidates.map((c) => {
-                        const idx = selectedManualPlayers.findIndex(p => p.player_id === c.player_id); const isSel = idx !== -1;
-                        return (<button key={c.player_id} onClick={() => toggleManualSelection(c)} className={`w-full flex justify-between p-3 rounded-xl border ${isSel ? 'bg-lime-500/20 border-lime-500/50' : 'hover:bg-slate-700 border-transparent'}`}><div className="flex gap-3"><span className={`w-6 h-6 rounded-full flex center text-xs font-bold ${isSel ? 'bg-lime-500 text-slate-900' : 'bg-slate-700 text-slate-300'}`}>{isSel ? idx + 1 : '-'}</span><p className="text-white font-bold text-sm">{c.profiles?.name} {c.profiles?.is_guest && '(G)'}</p></div></button>);
-                    })}
-                </div>
-                <div className="p-4 border-t border-slate-700">
-                    <div className="text-xs text-slate-400 mb-2 text-center">{selectedManualPlayers.length === 2 ? "Singles Match (1vs1)" : selectedManualPlayers.length === 4 ? "Doubles Match (2vs2)" : "Select 2 or 4 players"}</div>
-                    <button onClick={confirmManualMatch} disabled={selectedManualPlayers.length !== 4 && selectedManualPlayers.length !== 2} className="w-full py-3 bg-lime-600 hover:bg-lime-500 text-white font-bold rounded-xl shadow-lg disabled:opacity-50">Create Match</button>
-                </div>
-            </div>
-        </div>
-    )
-}
-
-{/* SWAP MODAL */ }
-{
-    isSwapModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-            <div className="bg-slate-800 border border-slate-600 rounded-2xl w-full max-w-md max-h-[80vh] flex flex-col shadow-2xl">
-                <div className="p-4 border-b border-slate-700 flex justify-between items-center"><h3 className="text-white font-bold text-lg">Swap Player</h3><button onClick={() => setIsSwapModalOpen(false)} className="text-slate-400 hover:text-white">✕</button></div>
-                <div className="p-4 border-b border-slate-900/50"><input type="text" placeholder="Search..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-slate-800 border border-slate-600 text-white p-2 rounded-lg outline-none" autoFocus /></div>
-                <div className="overflow-y-auto flex-1 p-2 space-y-1">
-                    {filteredCandidates.map((c) => (
-                        <button key={c.player_id} onClick={() => handleExecuteSwap(c)} className="w-full flex justify-between p-3 rounded-xl hover:bg-lime-500/20 border border-transparent"><div className="flex gap-3"><p className="text-white font-bold text-sm">{c.profiles?.name}</p></div><span className="text-xs bg-slate-700 text-slate-300 px-2 py-1 rounded">Select</span></button>
-                    ))}
-                </div>
-            </div>
-        </div>
-    )
-}
-
-{/* MATCH REVIEW MODAL */ }
-{
-    matchReviewTarget && (
-        <MatchReviewModal
-            match={matchReviewTarget}
-            user={user!}
-            onClose={() => setMatchReviewTarget(null)}
-            onSuccess={() => { setMatchReviewTarget(null); }}
-        />
-    )
-}
+            {/* MATCH REVIEW MODAL */}
+            {
+                matchReviewTarget && (
+                    <MatchReviewModal
+                        match={matchReviewTarget}
+                        user={user!}
+                        onClose={() => setMatchReviewTarget(null)}
+                        onSuccess={() => { setMatchReviewTarget(null); }}
+                    />
+                )
+            }
 
 
         </div >
