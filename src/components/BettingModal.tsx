@@ -27,6 +27,9 @@ type BettingMatch = MatchRow & {
     p3_name?: string;
     p4_name?: string;
     pool?: PoolData;
+    team1_avg_elo?: number;
+    team2_avg_elo?: number;
+    match_type?: Database['public']['Enums']['match_type_t'];
 };
 
 // History bet type
@@ -99,21 +102,42 @@ export default function BettingModal({ isOpen, onClose, myId }: Props) {
 
                 const { data: pNames } = await supabase
                     .from('profiles')
-                    .select('id, name')
+                    .select('id, name, gender, elo_mens_doubles, elo_womens_doubles, elo_mixed_doubles, elo_singles')
                     .in('id', Array.from(pIds));
 
-                const profilesMap = new Map((pNames || []).map(p => [p.id, p.name]));
+                const profilesMap = new Map((pNames || []).map(p => [p.id, p]));
+
+                // Helper to get ELO based on match type
+                const getPlayerElo = (pid: string | null, matchType: string | null) => {
+                    if (!pid) return 1200;
+                    const p = profilesMap.get(pid);
+                    if (!p) return 1200;
+
+                    // If match type is known, use specific ELO
+                    if (matchType === 'MENS_DOUBLES') return p.elo_mens_doubles ?? 1200;
+                    if (matchType === 'WOMENS_DOUBLES') return p.elo_womens_doubles ?? 1200;
+                    if (matchType === 'SINGLES') return p.elo_singles ?? 1200;
+                    // Default to mixed for mixed doubles or unknown
+                    return p.elo_mixed_doubles ?? 1200;
+                };
 
                 // Fetch pool data for each match
                 const enriched = await Promise.all(bettableMatches.map(async (m) => {
                     const pool = await fetchPoolData(m.id);
+
+                    // Calculate Team Avg ELO
+                    const t1Elo = (getPlayerElo(m.player_1, m.match_type) + getPlayerElo(m.player_2, m.match_type)) / 2;
+                    const t2Elo = (getPlayerElo(m.player_3, m.match_type) + getPlayerElo(m.player_4, m.match_type)) / 2;
+
                     return {
                         ...m,
-                        p1_name: m.player_1 ? profilesMap.get(m.player_1) : undefined,
-                        p2_name: m.player_2 ? profilesMap.get(m.player_2) : undefined,
-                        p3_name: m.player_3 ? profilesMap.get(m.player_3) : undefined,
-                        p4_name: m.player_4 ? profilesMap.get(m.player_4) : undefined,
-                        pool
+                        p1_name: m.player_1 ? profilesMap.get(m.player_1)?.name : undefined,
+                        p2_name: m.player_2 ? profilesMap.get(m.player_2)?.name : undefined,
+                        p3_name: m.player_3 ? profilesMap.get(m.player_3)?.name : undefined,
+                        p4_name: m.player_4 ? profilesMap.get(m.player_4)?.name : undefined,
+                        pool,
+                        team1_avg_elo: Math.round(t1Elo),
+                        team2_avg_elo: Math.round(t2Elo)
                     } as BettingMatch;
                 }));
 
@@ -138,7 +162,7 @@ export default function BettingModal({ isOpen, onClose, myId }: Props) {
                 .eq('user_id', myId)
                 .order('created_at', { ascending: false })
                 .limit(50);
-            setHistory((data || []) as HistoryBet[]);
+            setHistory((data || []) as unknown as HistoryBet[]);
         } catch (e) {
             console.error('[BettingModal] fetchHistory error:', e);
         }
@@ -314,6 +338,9 @@ export default function BettingModal({ isOpen, onClose, myId }: Props) {
                                                 >
                                                     <p className="text-xs text-slate-400 mb-1">{m.p1_name || 'Player 1'}</p>
                                                     <p className="text-xs text-slate-400 mb-2">{m.p2_name || 'Player 2'}</p>
+                                                    <div className="flex justify-center gap-2 items-center mb-1">
+                                                        <span className="text-[10px] bg-slate-800 text-slate-300 px-1.5 rounded border border-slate-600">Avg {m.team1_avg_elo}</span>
+                                                    </div>
                                                     <div className="text-2xl font-black text-lime-400 animate-pulse">x{pool.team1_odds.toFixed(2)}</div>
                                                 </div>
 
@@ -326,6 +353,9 @@ export default function BettingModal({ isOpen, onClose, myId }: Props) {
                                                 >
                                                     <p className="text-xs text-slate-400 mb-1">{m.p3_name || 'Player 3'}</p>
                                                     <p className="text-xs text-slate-400 mb-2">{m.p4_name || 'Player 4'}</p>
+                                                    <div className="flex justify-center gap-2 items-center mb-1">
+                                                        <span className="text-[10px] bg-slate-800 text-slate-300 px-1.5 rounded border border-slate-600">Avg {m.team2_avg_elo}</span>
+                                                    </div>
                                                     <div className="text-2xl font-black text-rose-400 animate-pulse">x{pool.team2_odds.toFixed(2)}</div>
                                                 </div>
                                             </div>

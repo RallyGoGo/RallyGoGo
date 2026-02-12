@@ -206,8 +206,14 @@ export default function AdminBoard({ onClose }: Props) {
         // Filter valid pool (excluding captains)
         const pool = profiles.filter(p => selectedEventMembers.has(p.id) && p.id !== blueCaptain && p.id !== whiteCaptain);
 
-        // Sort by mixed ELO (default) descending
-        pool.sort((a, b) => (b.ntrp || 0) - (a.ntrp || 0)); // Use NTRP or ELO as proxy
+        // Helper to get ELO based on Gender
+        const getElo = (p: Profile) => {
+            if (p.gender === 'FEMALE') return p.elo_womens_doubles ?? 1200;
+            return p.elo_mens_doubles ?? 1200;
+        };
+
+        // Sort by Gender-Specific ELO descending
+        pool.sort((a, b) => getElo(b) - getElo(a));
 
         // Snake Draft
         const blueTeam: Profile[] = [];
@@ -221,22 +227,21 @@ export default function AdminBoard({ onClose }: Props) {
 
         pool.forEach((p, idx) => {
             // Snake: 0->Blue, 1->White, 2->White, 3->Blue ...
-            // Simple Alternating for now roughly works if sorted, but let's do simple A/B/B/A
             if (idx % 4 === 0 || idx % 4 === 3) blueTeam.push(p);
             else whiteTeam.push(p);
         });
 
-        // Calculate Stats
+        // Calculate Stats (Avg based on Gender-Specific ELO)
         const getAvg = (team: Profile[]) => {
             if (team.length === 0) return 0;
-            const sum = team.reduce((acc, p) => acc + (p.ntrp || 0), 0);
-            return (sum / team.length).toFixed(2);
+            const sum = team.reduce((acc, p) => acc + getElo(p), 0);
+            return (sum / team.length).toFixed(0); // ELO is integer-like enough
         };
 
         setGeneratedTeams({
             blue: blueTeam,
             white: whiteTeam,
-            blueAvg: Number(getAvg(blueTeam)),
+            blueAvg: Number(getAvg(blueTeam)), // Now returns ELO avg
             whiteAvg: Number(getAvg(whiteTeam))
         });
     };

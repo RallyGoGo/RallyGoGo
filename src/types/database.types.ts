@@ -744,16 +744,24 @@ export type Database = {
         Args: { p_guest_id: string }
         Returns: Json
       }
+      admin_clear_queue: {
+        Args: Record<string, never>
+        Returns: Json
+      }
+      get_betting_pool: {
+        Args: { p_match_id: string }
+        Returns: Json
+      }
+      place_bet_parimutuel: {
+        Args: { p_match_id: string; p_pick_team: string; p_amount: number }
+        Returns: Json
+      }
       check_and_reset_daily: {
         Args: Record<PropertyKey, never>;
         Returns: boolean;
       };
       cast_mvp_vote: {
         Args: { p_match_id: string; p_tag?: string; p_target_id: string }
-        Returns: Json
-      }
-      admin_clear_queue: {
-        Args: Record<PropertyKey, never>
         Returns: Json
       }
       admin_confirm_match: {
