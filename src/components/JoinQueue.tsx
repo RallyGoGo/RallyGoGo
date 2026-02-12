@@ -28,6 +28,9 @@ export default function JoinQueue({ user, profile }: JoinQueueProps) {
     const [myQueue, setMyQueue] = useState<QueueEntry | null>(null);
     const [isEditing, setIsEditing] = useState(false);
     const [showGuestReg, setShowGuestReg] = useState(false);
+    const [showGuestRemove, setShowGuestRemove] = useState(false);
+    const [guestsInQueue, setGuestsInQueue] = useState<{ player_id: string; name: string; departure_time: string | null }[]>([]);
+    const [guestLoading, setGuestLoading] = useState(false);
 
     // ============================================================================
     // CHECK MY QUEUE STATUS
@@ -59,6 +62,76 @@ export default function JoinQueue({ user, profile }: JoinQueueProps) {
             logger.error('joinQueue.check_exception', err);
         }
     }, [user.id, isEditing]);
+
+    // ============================================================================
+    // FETCH GUESTS IN QUEUE
+    // ============================================================================
+    const fetchGuestsInQueue = useCallback(async () => {
+        try {
+            const { data, error } = await supabase
+                .from('queue')
+                .select(`
+                    player_id,
+                    departure_time,
+                    profiles!inner (name, is_guest)
+                `)
+                .eq('is_active', true)
+                .eq('profiles.is_guest', true);
+
+            if (error) {
+                logger.error('joinQueue.fetch_guests_error', error);
+                return;
+            }
+
+            if (data) {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const guests = data.map((q: any) => ({
+                    player_id: q.player_id,
+                    name: q.profiles?.name || 'Unknown',
+                    departure_time: q.departure_time
+                }));
+                setGuestsInQueue(guests);
+            }
+        } catch (err) {
+            logger.error('joinQueue.fetch_guests_exception', err);
+        }
+    }, []);
+
+    // ============================================================================
+    // REMOVE GUEST FROM QUEUE (RPC)
+    // ============================================================================
+    const handleRemoveGuest = async (guestId: string, guestName: string) => {
+        if (!confirm(`${guestName}님을 대기열에서 삭제하시겠습니까?`)) return;
+
+        setGuestLoading(true);
+        try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { data, error } = await (supabase.rpc as any)('remove_guest_from_queue', {
+                p_guest_id: guestId
+            });
+
+            if (error) {
+                logger.error('joinQueue.remove_guest_error', error);
+                throw error;
+            }
+
+            type RemoveResult = { success: boolean; error?: string; message?: string };
+            const response = data as RemoveResult;
+
+            if (response?.success) {
+                alert(response.message || '삭제되었습니다.');
+                await fetchGuestsInQueue();
+            } else {
+                throw new Error(response?.message || response?.error || '삭제 실패');
+            }
+        } catch (err: unknown) {
+            logger.error('joinQueue.remove_guest_exception', err);
+            const message = err instanceof Error ? err.message : 'Unknown error';
+            alert('오류: ' + message);
+        } finally {
+            setGuestLoading(false);
+        }
+    };
 
     // ============================================================================
     // INITIAL LOAD & REALTIME SUBSCRIPTION
@@ -297,13 +370,22 @@ export default function JoinQueue({ user, profile }: JoinQueueProps) {
     return (
         <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 h-full flex flex-col justify-center animate-fadeIn relative">
 
-            {/* Guest Registration Button */}
-            <div className="absolute top-4 right-4">
+            {/* Guest Registration & Remove Buttons */}
+            <div className="absolute top-4 right-4 flex gap-1">
+                <button
+                    onClick={() => {
+                        setShowGuestRemove(!showGuestRemove);
+                        if (!showGuestRemove) fetchGuestsInQueue();
+                    }}
+                    className="text-xs bg-rose-900/50 text-rose-300 px-2 py-1 rounded border border-rose-500/30 hover:bg-rose-800 transition-colors"
+                >
+                    🗑 게스트 삭제
+                </button>
                 <button
                     onClick={() => setShowGuestReg(true)}
                     className="text-xs bg-indigo-900/50 text-indigo-300 px-2 py-1 rounded border border-indigo-500/30 hover:bg-indigo-800 transition-colors"
                 >
-                    ⚡ 동반 게스트 등록
+                    ⚡ 게스트 등록
                 </button>
             </div>
 
@@ -399,6 +481,46 @@ export default function JoinQueue({ user, profile }: JoinQueueProps) {
                             {loading ? '처리 중...' : isEditing ? '시간 수정 완료' : '대기열 등록하기'}
                         </button>
                     </div>
+                </div>
+            )}
+
+            {/* Guest Remove Panel */}
+            {showGuestRemove && (
+                <div className="mt-4 bg-slate-900/80 border border-rose-500/30 rounded-xl p-4 animate-fadeIn">
+                    <div className="flex items-center justify-between mb-3">
+                        <h4 className="text-sm font-bold text-rose-400">🗑 대기 중 게스트 삭제</h4>
+                        <button
+                            onClick={() => setShowGuestRemove(false)}
+                            className="text-xs text-slate-500 hover:text-white"
+                        >
+                            닫기 ✕
+                        </button>
+                    </div>
+                    {guestsInQueue.length === 0 ? (
+                        <p className="text-xs text-slate-500 text-center py-2">대기 중인 게스트가 없습니다.</p>
+                    ) : (
+                        <div className="space-y-2 max-h-40 overflow-y-auto">
+                            {guestsInQueue.map((g) => (
+                                <div key={g.player_id} className="flex items-center justify-between bg-slate-800 rounded-lg px-3 py-2">
+                                    <div>
+                                        <span className="text-sm text-white font-bold">{g.name}</span>
+                                        <span className="text-xs text-slate-400 ml-2">
+                                            {g.departure_time
+                                                ? new Date(g.departure_time).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false })
+                                                : '시간 미설정'}
+                                        </span>
+                                    </div>
+                                    <button
+                                        onClick={() => handleRemoveGuest(g.player_id, g.name)}
+                                        disabled={guestLoading}
+                                        className="text-xs bg-rose-600/50 text-rose-200 px-2 py-1 rounded hover:bg-rose-500 transition-colors disabled:opacity-50"
+                                    >
+                                        {guestLoading ? '...' : '삭제'}
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
             )}
 
