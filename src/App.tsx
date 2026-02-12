@@ -170,7 +170,7 @@ export default function App() {
           <Suspense fallback={<LoadingSpinner message="경기장 입장 중..." />}>
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
               <div className="order-1 lg:col-span-4 lg:order-1">
-                <JoinQueue user={user} profile={profile} />
+                <JoinQueue user={user} profile={profile} queue={queue} />
               </div>
               <div className="order-2 lg:col-span-8 lg:order-2 lg:row-span-2">
                 <CourtBoard user={user} matches={matches} queue={queue} />

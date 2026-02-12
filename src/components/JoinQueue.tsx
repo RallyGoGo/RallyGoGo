@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase, Profile } from '../lib/supabase';
 import { logger } from '../utils/logger';
@@ -10,6 +10,8 @@ import GuestRegistrar from './GuestRegistrar';
 interface JoinQueueProps {
     user: User;
     profile: Profile | null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    queue: any[]; // Queue type from App.tsx (enriched with profiles)
 }
 
 interface QueueEntry {
@@ -22,7 +24,7 @@ interface QueueEntry {
 // ============================================================================
 // COMPONENT
 // ============================================================================
-export default function JoinQueue({ user, profile }: JoinQueueProps) {
+export default function JoinQueue({ user, profile, queue }: JoinQueueProps) {
     const [loading, setLoading] = useState(false);
     const [departureTime, setDepartureTime] = useState('');
     const [myQueue, setMyQueue] = useState<QueueEntry | null>(null);
@@ -33,69 +35,42 @@ export default function JoinQueue({ user, profile }: JoinQueueProps) {
     const [guestLoading, setGuestLoading] = useState(false);
 
     // ============================================================================
-    // CHECK MY QUEUE STATUS
+    // SYNC STATE FROM PROPS (REALTIME)
     // ============================================================================
-    const checkMyQueue = useCallback(async () => {
-        try {
-            const { data, error } = await supabase
-                .from('queue')
-                .select('id, departure_time, priority_score, joined_at')
-                .eq('player_id', user.id)
-                .eq('is_active', true)
-                .maybeSingle();
+    useEffect(() => {
+        if (!queue) return;
 
-            if (error) {
-                logger.error('joinQueue.check_error', error);
-                return;
-            }
+        // 1. My Queue Status
+        const myEntry = queue.find(q => q.player_id === user.id);
+        const prevQueueId = myQueue?.id;
 
-            if (data) {
-                setMyQueue(data);
-                if (!isEditing) {
-                    setDepartureTime(data.departure_time || '');
-                }
-            } else {
-                setMyQueue(null);
-                if (!isEditing) setDepartureTime('');
+        setMyQueue(myEntry || null);
+
+        // Update departure time field only if not editing
+        // If I just joined (myQueue became valid), set the time.
+        if (myEntry) {
+            if (!prevQueueId && !isEditing) {
+                // Just joined
+                setDepartureTime(myEntry.departure_time || '');
+            } else if (!isEditing) {
+                // Background update
+                setDepartureTime(myEntry.departure_time || '');
             }
-        } catch (err) {
-            logger.error('joinQueue.check_exception', err);
+        } else {
+            if (!isEditing) setDepartureTime('');
         }
-    }, [user.id, isEditing]);
 
-    // ============================================================================
-    // FETCH GUESTS IN QUEUE
-    // ============================================================================
-    const fetchGuestsInQueue = useCallback(async () => {
-        try {
-            const { data, error } = await supabase
-                .from('queue')
-                .select(`
-                    player_id,
-                    departure_time,
-                    profiles!inner (name, is_guest)
-                `)
-                .eq('is_active', true)
-                .eq('profiles.is_guest', true);
+        // 2. Guest List
+        const guests = queue
+            .filter(q => q.profiles?.is_guest)
+            .map(q => ({
+                player_id: q.player_id,
+                name: q.profiles?.name || 'Unknown',
+                departure_time: q.departure_time
+            }));
+        setGuestsInQueue(guests);
 
-            if (error) {
-                logger.error('joinQueue.fetch_guests_error', error);
-                return;
-            }
-
-            if (data) {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const guests = data.map((q: any) => ({
-                    player_id: q.player_id,
-                    name: q.profiles?.name || 'Unknown',
-                    departure_time: q.departure_time
-                }));
-                setGuestsInQueue(guests);
-            }
-        } catch (err) {
-            logger.error('joinQueue.fetch_guests_exception', err);
-        }
-    }, []);
+    }, [queue, user.id, isEditing]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // ============================================================================
     // REMOVE GUEST FROM QUEUE (RPC)
@@ -119,7 +94,6 @@ export default function JoinQueue({ user, profile }: JoinQueueProps) {
 
             if (response?.success) {
                 alert(response.message || '삭제되었습니다.');
-                await fetchGuestsInQueue();
             } else {
                 throw new Error(response?.message || response?.error || '삭제 실패');
             }
@@ -131,34 +105,6 @@ export default function JoinQueue({ user, profile }: JoinQueueProps) {
             setGuestLoading(false);
         }
     };
-
-    // ============================================================================
-    // INITIAL LOAD & REALTIME SUBSCRIPTION
-    // Note: App.tsx handles centralized realtime, but we keep local check for 
-    // immediate feedback after actions
-    // ============================================================================
-    useEffect(() => {
-        checkMyQueue();
-
-        // Subscribe to queue changes for this user
-        const channel = supabase
-            .channel(`queue_${user.id}`)
-            .on(
-                'postgres_changes',
-                {
-                    event: '*',
-                    schema: 'public',
-                    table: 'queue',
-                    filter: `player_id=eq.${user.id}`
-                },
-                () => checkMyQueue()
-            )
-            .subscribe();
-
-        return () => {
-            supabase.removeChannel(channel);
-        };
-    }, [user.id, checkMyQueue]);
 
     // ============================================================================
     // JOIN QUEUE (RPC) - V3 Enhanced with diagnostic logging
@@ -231,7 +177,6 @@ export default function JoinQueue({ user, profile }: JoinQueueProps) {
                 } else {
                     alert('대기열에 등록되었습니다! 🚀');
                 }
-                await checkMyQueue();
             } else {
                 // Extract error with multiple fallbacks
                 const errorMsg = response.error || response.message || JSON.stringify(response);
@@ -294,7 +239,6 @@ export default function JoinQueue({ user, profile }: JoinQueueProps) {
             logger.info('joinQueue.update_success', { queueId: myQueue.id });
             alert('시간이 수정되었습니다! 🕒');
             setIsEditing(false);
-            await checkMyQueue();
         } catch (error: unknown) {
             logger.error('joinQueue.update_exception', error);
             const message = error instanceof Error ? error.message : 'Unknown error';
@@ -330,12 +274,12 @@ export default function JoinQueue({ user, profile }: JoinQueueProps) {
             const response = data as LeaveQueueResult | null;
 
             if (response?.success === true) {
+                // Optimistic UI update can be done here, but props will handle it
                 setMyQueue(null);
                 setDepartureTime('');
                 setIsEditing(false);
                 alert('대기가 취소되었습니다.');
             } else if (response?.error === 'NOT_IN_QUEUE') {
-                // If not in queue, just clear local state
                 setMyQueue(null);
                 setDepartureTime('');
             } else {
@@ -372,10 +316,7 @@ export default function JoinQueue({ user, profile }: JoinQueueProps) {
             {/* Guest Registration & Remove Buttons */}
             <div className="absolute top-4 right-4 flex gap-1">
                 <button
-                    onClick={() => {
-                        setShowGuestRemove(!showGuestRemove);
-                        if (!showGuestRemove) fetchGuestsInQueue();
-                    }}
+                    onClick={() => setShowGuestRemove(!showGuestRemove)}
                     className="text-xs bg-rose-900/50 text-rose-300 px-2 py-1 rounded border border-rose-500/30 hover:bg-rose-800 transition-colors"
                 >
                     🗑 게스트 삭제
@@ -465,7 +406,8 @@ export default function JoinQueue({ user, profile }: JoinQueueProps) {
                             <button
                                 onClick={() => {
                                     setIsEditing(false);
-                                    checkMyQueue();
+                                    // Revert time if cancelled
+                                    setDepartureTime(myQueue?.departure_time || '');
                                 }}
                                 className="flex-1 py-4 bg-slate-700 text-white rounded-xl font-bold hover:bg-slate-600 transition-colors"
                             >

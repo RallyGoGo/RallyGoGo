@@ -1,7 +1,6 @@
-
 import { useState, useEffect, useCallback } from 'react';
 import { Session } from '@supabase/supabase-js';
-import { supabase, Profile, Queue } from '../lib/supabase';
+import { supabase, Profile } from '../lib/supabase';
 import { logger } from '../utils/logger';
 
 export function useRallyData() {
@@ -12,7 +11,8 @@ export function useRallyData() {
     // Downstream components cast to AppMatch as needed
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const [matches, setMatches] = useState<any[]>([]);
-    const [queue, setQueue] = useState<Queue[]>([]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const [queue, setQueue] = useState<any[]>([]);
     const [isInitializing, setIsInitializing] = useState(true);
 
     // ============================================================================
@@ -139,8 +139,9 @@ export function useRallyData() {
             if (data) {
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 setQueue(data as any);
+                return data;
             }
-            return data ?? [];
+            return [];
         } catch (err) {
             logger.error('queue.fetch_exception', err);
             return [];
@@ -166,6 +167,8 @@ export function useRallyData() {
             logger.error('system.daily_reset_exception', err);
         }
     }, [fetchQueue, fetchMatches, fetchProfile, session]);
+
+    // ============================================================================
     // AUTH & REALTIME SUBSCRIPTION
     // ============================================================================
     useEffect(() => {
@@ -216,7 +219,7 @@ export function useRallyData() {
                 }
             });
 
-        // Initial Fech
+        // Initial Fetch
         void fetchNotice();
         void fetchMatches();
         void fetchQueue();
@@ -229,7 +232,7 @@ export function useRallyData() {
             if (realtimeChannel) supabase.removeChannel(realtimeChannel);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [fetchMatches, fetchNotice, fetchProfile, fetchQueue]);
+    }, [fetchMatches, fetchNotice, fetchProfile, fetchQueue]); // checkDailyReset excluded to avoid loop if session changes often
 
     return {
         session,
