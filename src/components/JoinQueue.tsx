@@ -34,6 +34,19 @@ export default function JoinQueue({ user, profile, queue }: JoinQueueProps) {
     const [guestsInQueue, setGuestsInQueue] = useState<{ player_id: string; name: string; departure_time: string | null }[]>([]);
     const [guestLoading, setGuestLoading] = useState(false);
 
+    // Helper to robustly format time to HH:mm
+    const formatTime = (isoString: string | null) => {
+        if (!isoString) return '';
+        const d = new Date(isoString);
+        if (isNaN(d.getTime())) {
+            // Fallback for non-ISO time strings (e.g. "14:00")
+            if (isoString.includes(':') && isoString.length <= 8) return isoString.substring(0, 5);
+            return '';
+        }
+        // "en-GB" uses HH:mm format by default for time, which works for input[type="time"]
+        return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    };
+
     // ============================================================================
     // SYNC STATE FROM PROPS (REALTIME)
     // ============================================================================
@@ -49,14 +62,6 @@ export default function JoinQueue({ user, profile, queue }: JoinQueueProps) {
         // Update departure time field only if not editing
         // If I just joined (myQueue became valid), set the time.
         if (myEntry) {
-            const formatTime = (isoString: string | null) => {
-                if (!isoString) return '';
-                // TIMESTAMPTZ를 받아서 로컬 시간(HH:mm)으로 변환
-                const d = new Date(isoString);
-                // "en-GB" uses HH:mm format by default for time
-                return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-            };
-
             if (!prevQueueId && !isEditing) {
                 // Just joined
                 setDepartureTime(formatTime(myEntry.departure_time));
@@ -347,9 +352,7 @@ export default function JoinQueue({ user, profile, queue }: JoinQueueProps) {
                     <div className="text-4xl mb-4">🎾</div>
                     <p className="text-white font-bold text-lg mb-1">현재 대기 중입니다</p>
                     <p className="text-lime-400 font-mono text-2xl font-black mb-2">
-                        {myQueue.departure_time
-                            ? new Date(myQueue.departure_time).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false })
-                            : '--:--'} 까지
+                        {formatTime(myQueue.departure_time) || '--:--'} 까지
                     </p>
                     {myQueue.priority_score && (
                         <p className="text-sm text-yellow-400 mb-4">
