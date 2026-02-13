@@ -49,12 +49,20 @@ export default function JoinQueue({ user, profile, queue }: JoinQueueProps) {
         // Update departure time field only if not editing
         // If I just joined (myQueue became valid), set the time.
         if (myEntry) {
+            const formatTime = (isoString: string | null) => {
+                if (!isoString) return '';
+                // TIMESTAMPTZ를 받아서 로컬 시간(HH:mm)으로 변환
+                const d = new Date(isoString);
+                // "en-GB" uses HH:mm format by default for time
+                return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+            };
+
             if (!prevQueueId && !isEditing) {
                 // Just joined
-                setDepartureTime(myEntry.departure_time || '');
+                setDepartureTime(formatTime(myEntry.departure_time));
             } else if (!isEditing) {
                 // Background update
-                setDepartureTime(myEntry.departure_time || '');
+                setDepartureTime(formatTime(myEntry.departure_time));
             }
         } else {
             if (!isEditing) setDepartureTime('');
