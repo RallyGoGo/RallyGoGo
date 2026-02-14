@@ -14,6 +14,7 @@ import type { AppQueueItem } from '../types/app';
 interface QueueBoardProps {
     user: User;
     queue: AppQueueItem[];
+    isAdmin?: boolean;
 }
 
 // Helper to calculate score - reused from existing code or imported
@@ -54,6 +55,13 @@ export default function QueueBoard({ user, queue }: QueueBoardProps) {
         const gender = (profile.gender || '').toUpperCase();
         const score = gender === 'MALE' ? profile.elo_mens_doubles : profile.elo_womens_doubles;
         return score || 1250;
+    };
+
+    const formatTimeCell = (time: string | null | undefined, emptyLabel = '-') => {
+        if (!time) return emptyLabel;
+        const parsed = new Date(time);
+        if (Number.isNaN(parsed.getTime())) return emptyLabel;
+        return parsed.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false });
     };
 
     return (
@@ -106,12 +114,10 @@ export default function QueueBoard({ user, queue }: QueueBoardProps) {
                                 </div>
 
                                 <div className="col-span-2 font-bold text-slate-500">
-                                    {item.joined_at ? new Date(item.joined_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false }) : '-'}
+                                    {formatTimeCell(item.joined_at, '-')}
                                 </div>
                                 <div className={`col-span-2 font-bold ${hasUrgentBuff ? 'text-rose-400 animate-pulse' : 'text-white'}`}>
-                                    {item.departure_time
-                                        ? new Date(item.departure_time).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false })
-                                        : '-'}
+                                    {formatTimeCell(item.departure_time, '미입력')}
                                 </div>
                                 <div className="col-span-2 font-mono text-yellow-400 font-bold flex items-center justify-center gap-1">
                                     {item.finalScore.toFixed(0)}

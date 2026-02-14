@@ -1,5 +1,6 @@
 import { supabase, Match } from '../lib/supabase';
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 // Services
 import { calculatePriorityScore, generateV83Match } from '../services/matchingSystem';
 import { logger } from '../utils/logger';
@@ -107,6 +108,41 @@ export default function CourtBoard({ user, matches, queue }: CourtBoardProps) {
     const [manualTargetCourt, setManualTargetCourt] = useState<string | null>(null);
     const [selectedManualPlayers, setSelectedManualPlayers] = useState<AppQueueItem[]>([]);
     const [matchReviewTarget, setMatchReviewTarget] = useState<AppMatch | null>(null);
+    const matchSyncChannelRef = useRef<RealtimeChannel | null>(null);
+
+    useEffect(() => {
+        const channel = supabase.channel('match-sync');
+        matchSyncChannelRef.current = channel;
+        channel.subscribe();
+
+        return () => {
+            matchSyncChannelRef.current = null;
+            void supabase.removeChannel(channel);
+        };
+    }, []);
+
+    const broadcastMatchStateChanged = async (action: string, matchId?: string) => {
+        try {
+            const channel = matchSyncChannelRef.current;
+            if (!channel) return;
+
+            await channel.send({
+                type: 'broadcast',
+                event: 'match_state_changed',
+                payload: {
+                    action,
+                    match_id: matchId || null,
+                    at: new Date().toISOString()
+                }
+            });
+        } catch (error) {
+            logger.warn('match.broadcast_fail', {
+                action,
+                matchId,
+                message: error instanceof Error ? error.message : String(error)
+            });
+        }
+    };
 
     // Derived State for Auto-Match
     const getSmartSortedQueue = async () => {
@@ -114,21 +150,6 @@ export default function CourtBoard({ user, matches, queue }: CourtBoardProps) {
     };
 
     // [New] PENDING matches for notification (derived from props)
-    // For ADMIN: Show ALL pending matches
-    // For USER: Show only matches they are involved in
-    const isAdmin = user && matches.some(m => false); // We don't have role in user prop... checking if user can see admin dashboard logic might be needed.
-    // Actually, let's just use the `user` object if we had role.
-    // Since we don't have role passed in prop easily (it's in App.tsx state), we'll rely on the existing "pendingReviewMatch" for participants.
-    // BUT, the request implies they want the "Admin Confirmation Window".
-    // Let's add a section for "All Pending Matches" if there are any, and we are not a participant strings attached.
-
-    // Better approach: Just list "Pending Matches" below Notification Banner if they exist and user is not participating (so they can see them).
-    // Or strictly for the user who reported it but isn't seeing it? 
-    // Wait, the user said "Admin menu's match confirmation window disappeared". 
-    // This strongly suggests they were using AdminDashboard or a specific Admin view.
-    // I already updated AdminDashboard.
-
-    // Let's also add a small "Pending Matches" list to CourtBoard for everyone to see (read-only) or Admin to act.
 
     const pendingReviewMatch = useMemo(() => user ? pendingMatches.find(m =>
         ([m.player_1, m.player_2, m.player_3, m.player_4].includes(user.id))
@@ -176,6 +197,7 @@ export default function CourtBoard({ user, matches, queue }: CourtBoardProps) {
                 throw new Error(error?.message || rpcErr || 'Unknown error');
             }
             logger.info('match.auto_created', { court: courtName, matchType });
+            void broadcastMatchStateChanged('MATCH_DRAFT_CREATED', String((data as { match_id?: string } | null)?.match_id || ''));
             // // fetchMatches(); // Handled by Realtime in parent
         } catch (e: Error | unknown) {
             logger.error('match.auto_fail', e);
@@ -218,11 +240,16 @@ export default function CourtBoard({ user, matches, queue }: CourtBoardProps) {
         try {
             const pIds = selectedManualPlayers.map(p => p.player_id);
             const isSingles = count === 2;
+            const genders = selectedManualPlayers.map(p => (p.profiles?.gender || '').toUpperCase());
+            const isAllMale = !isSingles && genders.length === 4 && genders.every(g => g === 'MALE');
+            const isAllFemale = !isSingles && genders.length === 4 && genders.every(g => g === 'FEMALE');
+            const manualMatchType: 'MIXED' | 'MENS_DOUBLES' | 'WOMENS_DOUBLES' | 'SINGLES' =
+                isSingles ? 'SINGLES' : isAllMale ? 'MENS_DOUBLES' : isAllFemale ? 'WOMENS_DOUBLES' : 'MIXED';
 
             // V9.7.2: Strict RPC Model - create_match_draft
             const { data, error } = await supabase.rpc('create_match_draft', {
                 p_player_ids: pIds,
-                p_match_type: isSingles ? 'SINGLES' : 'MIXED',
+                p_match_type: manualMatchType,
                 p_court_name: manualTargetCourt
             });
             const rpcErr = getRpcError(data);
@@ -230,7 +257,8 @@ export default function CourtBoard({ user, matches, queue }: CourtBoardProps) {
                 logger.error('match.manual_create_fail', error || rpcErr);
                 throw new Error(error?.message || rpcErr || 'Unknown error');
             }
-            logger.info('match.manual_created', { court: manualTargetCourt, isSingles });
+            logger.info('match.manual_created', { court: manualTargetCourt, isSingles, matchType: manualMatchType });
+            void broadcastMatchStateChanged('MATCH_DRAFT_CREATED', String((data as { match_id?: string } | null)?.match_id || ''));
             setIsManualModalOpen(false);
             setManualTargetCourt(null);
             setSelectedManualPlayers([]);
@@ -268,6 +296,7 @@ export default function CourtBoard({ user, matches, queue }: CourtBoardProps) {
             if (data && typeof data === 'object' && 'error' in data) throw new Error(String((data as Record<string, unknown>).error));
 
             logger.info('match.player_swapped', { matchId: swapTarget.matchId, old: swapTarget.oldName, new: candidate.profiles?.name });
+            void broadcastMatchStateChanged('MATCH_PLAYER_SWAPPED', swapTarget.matchId);
             setIsSwapModalOpen(false);
             setSwapTarget(null);
             // fetchMatches();
@@ -287,6 +316,7 @@ export default function CourtBoard({ user, matches, queue }: CourtBoardProps) {
             if (error || rpcErr) throw new Error(error?.message || rpcErr || 'Unknown error');
 
             logger.info('match.started', { matchId });
+            void broadcastMatchStateChanged('MATCH_STARTED', matchId);
             // fetchMatches();
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : 'Start failed';
@@ -304,6 +334,7 @@ export default function CourtBoard({ user, matches, queue }: CourtBoardProps) {
             if (error || rpcErr) throw new Error(error?.message || rpcErr || 'Unknown error');
 
             logger.info('match.ended', { matchId });
+            void broadcastMatchStateChanged('MATCH_ENDED', matchId);
             // fetchMatches();
         } catch (e: Error | unknown) {
             logger.error('match.end_fail', e);
@@ -321,6 +352,7 @@ export default function CourtBoard({ user, matches, queue }: CourtBoardProps) {
             if (error || rpcErr) throw new Error(error?.message || rpcErr || 'Unknown error');
 
             logger.info('match.cancelled', { matchId });
+            void broadcastMatchStateChanged('MATCH_CANCELLED', matchId);
             // fetchMatches();
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : 'Cancel failed';
@@ -359,6 +391,7 @@ export default function CourtBoard({ user, matches, queue }: CourtBoardProps) {
             if (error || rpcErr) throw new Error(error?.message || rpcErr || 'Unknown error');
 
             logger.info('match.score_reported', { matchId });
+            void broadcastMatchStateChanged('MATCH_SCORE_REPORTED', matchId);
             // V9.7.2: Strict RPC Model - report_score logic complete
             // Service call removed - RPC handles everything
             alert("✅ Reported! Waiting for confirmation.");
@@ -405,6 +438,7 @@ export default function CourtBoard({ user, matches, queue }: CourtBoardProps) {
             }
 
             logger.info('match.confirmed', { matchId, betsSettled: rpcData?.bets_settled });
+            void broadcastMatchStateChanged('MATCH_CONFIRMED', matchId);
             alert("🎉 Match Confirmed! ELO updated.");
             // fetchMatches();
         } catch (e: unknown) {
@@ -425,6 +459,7 @@ export default function CourtBoard({ user, matches, queue }: CourtBoardProps) {
             if (error || rpcErr) throw new Error(error?.message || rpcErr || 'Unknown error');
 
             logger.info('match.disputed', { matchId });
+            void broadcastMatchStateChanged('MATCH_REJECTED', matchId);
             alert("🛑 Rejected (Status: DISPUTED).");
             // fetchMatches();
         } catch (e: unknown) {

@@ -38,6 +38,13 @@ export default function AdminBoard({ onClose }: Props) {
     const [editForm, setEditForm] = useState<Partial<Profile>>({});
     const [newNotice, setNewNotice] = useState('');
 
+    const mapAdminRpcError = (msg: string) => {
+        if (msg.includes('ADMIN_REQUIRED')) {
+            return '서버 권한 오류(ADMIN_REQUIRED): DB 마이그레이션 적용 또는 계정 role=admin 설정이 필요합니다.';
+        }
+        return msg;
+    };
+
     useEffect(() => {
         if (activeTab === 'MEMBERS') fetchProfiles();
         else if (activeTab === 'NOTICES') fetchNotices();
@@ -132,7 +139,7 @@ export default function AdminBoard({ onClose }: Props) {
             fetchMatches();
         } catch (e) {
             const errMsg = e instanceof Error ? e.message : String(e);
-            alert("Error: " + errMsg);
+            alert("Error: " + mapAdminRpcError(errMsg));
         }
         setLoading(false);
     };
@@ -161,7 +168,7 @@ export default function AdminBoard({ onClose }: Props) {
             fetchMatches();
         } catch (e) {
             const errMsg = e instanceof Error ? e.message : String(e);
-            alert("Error: " + errMsg);
+            alert("Error: " + mapAdminRpcError(errMsg));
         }
         setLoading(false);
     };

@@ -861,7 +861,7 @@ export type Database = {
         Returns: Json
       }
       remove_expired_from_queue: {
-        Args: { p_queue_ids: string[] }
+        Args: { p_queue_ids?: string[] | null }
         Returns: Json
       }
       create_profile: {

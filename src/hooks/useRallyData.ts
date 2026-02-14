@@ -15,6 +15,34 @@ export function useRallyData() {
     const [queue, setQueue] = useState<any[]>([]);
     const [isInitializing, setIsInitializing] = useState(true);
 
+    const cleanupExpiredQueue = useCallback(async () => {
+        try {
+            const { data, error } = await supabase.rpc('remove_expired_from_queue');
+            if (error) {
+                logger.warn('queue.cleanup_fail', { message: error.message });
+                return { deleted: 0, repaired: 0 };
+            }
+
+            const payload = (data ?? {}) as {
+                deleted_count?: number;
+                repaired_count?: number;
+                success?: boolean;
+            };
+
+            if (payload.success === false) {
+                return { deleted: 0, repaired: 0 };
+            }
+
+            return {
+                deleted: Number(payload.deleted_count ?? 0),
+                repaired: Number(payload.repaired_count ?? 0)
+            };
+        } catch (err) {
+            logger.warn('queue.cleanup_exception', err);
+            return { deleted: 0, repaired: 0 };
+        }
+    }, []);
+
     // ============================================================================
     // DATA FETCHING FUNCTIONS
     // ============================================================================
@@ -122,6 +150,9 @@ export function useRallyData() {
 
     const fetchQueue = useCallback(async () => {
         try {
+            // Keep queue expiry and missing departure_time handling on server time.
+            await cleanupExpiredQueue();
+
             const { data, error } = await supabase
                 .from('queue')
                 .select(`
@@ -146,7 +177,7 @@ export function useRallyData() {
             logger.error('queue.fetch_exception', err);
             return [];
         }
-    }, []);
+    }, [cleanupExpiredQueue]);
 
     const checkDailyReset = useCallback(async () => {
         try {
@@ -205,7 +236,10 @@ export function useRallyData() {
         const realtimeChannel = supabase
             .channel('app-realtime')
             .on('postgres_changes', { event: '*', schema: 'public', table: 'notices' }, () => void fetchNotice())
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, () => void fetchMatches())
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, () => {
+                void fetchMatches();
+                void fetchQueue();
+            })
             .on('postgres_changes', { event: '*', schema: 'public', table: 'queue' }, () => void fetchQueue())
             .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles' }, async (payload) => {
                 const { data: { user } } = await supabase.auth.getUser();
@@ -219,20 +253,47 @@ export function useRallyData() {
                 }
             });
 
+        // Broadcast-based match sync channel (fallback/complement to postgres changes).
+        const matchSyncChannel = supabase
+            .channel('match-sync', { config: { broadcast: { self: true } } })
+            .on('broadcast', { event: 'match_state_changed' }, () => {
+                void fetchMatches();
+                void fetchQueue();
+            })
+            .subscribe();
+
         // Initial Fetch
         void fetchNotice();
         void fetchMatches();
         void fetchQueue();
         void checkDailyReset();
 
+        // Safety polling so expired users disappear even without realtime DB changes.
+        const queueMaintenanceInterval = setInterval(() => {
+            void (async () => {
+                const result = await cleanupExpiredQueue();
+                if (result.deleted > 0 || result.repaired > 0) {
+                    void fetchQueue();
+                }
+            })();
+        }, 30000);
+
+        // Realtime fallback polling to recover from temporary websocket drops.
+        const liveSyncInterval = setInterval(() => {
+            void fetchMatches();
+        }, 10000);
+
         return () => {
             mounted = false;
             clearTimeout(failsafeTimeout);
+            clearInterval(queueMaintenanceInterval);
+            clearInterval(liveSyncInterval);
             authSubscription.unsubscribe();
             if (realtimeChannel) supabase.removeChannel(realtimeChannel);
+            if (matchSyncChannel) supabase.removeChannel(matchSyncChannel);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [fetchMatches, fetchNotice, fetchProfile, fetchQueue]); // checkDailyReset excluded to avoid loop if session changes often
+    }, [cleanupExpiredQueue, fetchMatches, fetchNotice, fetchProfile, fetchQueue]); // checkDailyReset excluded to avoid loop if session changes often
 
     return {
         session,
