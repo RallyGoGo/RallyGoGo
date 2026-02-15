@@ -881,6 +881,14 @@ export type Database = {
         Args: { p_content: string }
         Returns: Json
       }
+      admin_remove_queue_entry: {
+        Args: { p_queue_id: string; p_reason?: string }
+        Returns: Json
+      }
+      confirm_queue_entry_removal: {
+        Args: { p_queue_id: string; p_reason?: string }
+        Returns: Json
+      }
       admin_delete_notice: {
         Args: { p_notice_id: string }
         Returns: Json
