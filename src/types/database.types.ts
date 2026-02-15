@@ -783,6 +783,11 @@ export type Database = {
           p_gender?: string
           p_ntrp?: number
           p_role?: string
+          p_elo_mens_doubles?: number
+          p_elo_womens_doubles?: number
+          p_elo_mixed_doubles?: number
+          p_elo_singles?: number
+          p_rally_point_delta?: number
         }
         Returns: Json
       }

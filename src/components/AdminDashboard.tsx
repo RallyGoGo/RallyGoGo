@@ -15,6 +15,7 @@ type Match = MatchRow & {
 };
 
 type Props = { onClose: () => void; };
+type AdminEditForm = Partial<Profile> & { rally_point_delta?: number | null };
 
 
 export default function AdminBoard({ onClose }: Props) {
@@ -35,7 +36,7 @@ export default function AdminBoard({ onClose }: Props) {
     const [recPartner, setRecPartner] = useState<{ name: string, winRate: number, count: number } | null>(null);
 
     const [editingId, setEditingId] = useState<string | null>(null);
-    const [editForm, setEditForm] = useState<Partial<Profile>>({});
+    const [editForm, setEditForm] = useState<AdminEditForm>({});
     const [newNotice, setNewNotice] = useState('');
 
     const mapAdminRpcError = (msg: string) => {
@@ -95,17 +96,45 @@ export default function AdminBoard({ onClose }: Props) {
 
     const startEdit = (p: Profile) => {
         setEditingId(p.id);
-        setEditForm({ name: p.name || '', gender: p.gender || 'MALE', ntrp: p.ntrp || 0, role: p.role || 'player' });
+        setEditForm({
+            name: p.name || '',
+            gender: p.gender || 'MALE',
+            ntrp: p.ntrp || 0,
+            role: p.role || 'player',
+            elo_mens_doubles: p.elo_mens_doubles ?? 1200,
+            elo_womens_doubles: p.elo_womens_doubles ?? 1200,
+            elo_mixed_doubles: p.elo_mixed_doubles ?? 1200,
+            elo_singles: p.elo_singles ?? 1200,
+            rally_point_delta: 0
+        });
     };
 
     const saveEdit = async () => {
         if (!editingId) return;
+
+        const toOptionalNumber = (value: unknown): number | undefined => {
+            if (typeof value !== 'number' || Number.isNaN(value)) return undefined;
+            return value;
+        };
+
+        const rallyPointDelta = (() => {
+            const n = toOptionalNumber(editForm.rally_point_delta);
+            if (n === undefined) return undefined;
+            const normalized = Math.trunc(n);
+            return normalized === 0 ? undefined : normalized;
+        })();
+
         const { data, error } = await supabase.rpc('admin_update_profile', {
             p_profile_id: editingId,
             p_name: editForm.name || undefined,
             p_gender: editForm.gender || undefined,
-            p_ntrp: editForm.ntrp || undefined,
-            p_role: editForm.role || undefined
+            p_ntrp: toOptionalNumber(editForm.ntrp),
+            p_role: editForm.role || undefined,
+            p_elo_mens_doubles: toOptionalNumber(editForm.elo_mens_doubles),
+            p_elo_womens_doubles: toOptionalNumber(editForm.elo_womens_doubles),
+            p_elo_mixed_doubles: toOptionalNumber(editForm.elo_mixed_doubles),
+            p_elo_singles: toOptionalNumber(editForm.elo_singles),
+            p_rally_point_delta: rallyPointDelta
         });
         if (error) { alert(error.message); return; }
         if (!isRpcSuccess(data as RpcResponse)) { alert(`Error: ${(data as { error?: string })?.error || 'Unknown error'}`); return; }
@@ -380,10 +409,18 @@ export default function AdminBoard({ onClose }: Props) {
                                 <div className="overflow-x-auto">
                                     <table className="w-full text-left border-collapse">
                                         <thead className="bg-slate-700 text-slate-300 text-xs uppercase">
-                                            <tr><th className="p-4 min-w-[100px]">이름</th><th className="p-4">성별</th><th className="p-4">NTRP</th><th className="p-4">등급(Role)</th><th className="p-4 text-right">관리</th></tr>
+                                            <tr>
+                                                <th className="p-4 min-w-[100px]">이름</th>
+                                                <th className="p-4">성별</th>
+                                                <th className="p-4">NTRP</th>
+                                                <th className="p-4 min-w-[210px]">ELO(남/여/혼/단)</th>
+                                                <th className="p-4 min-w-[150px]">토토P</th>
+                                                <th className="p-4">등급(Role)</th>
+                                                <th className="p-4 text-right">관리</th>
+                                            </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-700">
-                                            {loading ? <tr><td colSpan={5} className="p-8 text-center text-slate-500">로딩 중...</td></tr> : filteredProfiles.map(p => (
+                                            {loading ? <tr><td colSpan={7} className="p-8 text-center text-slate-500">로딩 중...</td></tr> : filteredProfiles.map(p => (
                                                 <tr key={p.id} className="hover:bg-slate-700/50">
                                                     <td className="p-4">
                                                         {editingId === p.id ? <input className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white w-full" value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} /> : <span className="font-bold text-white">{p.name}</span>}
@@ -402,12 +439,46 @@ export default function AdminBoard({ onClose }: Props) {
                                                     </td>
                                                     <td className="p-4">
                                                         {editingId === p.id ? (
+                                                            <div className="grid grid-cols-2 gap-1">
+                                                                <input type="number" className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white w-20 text-xs" value={editForm.elo_mens_doubles ?? ''} onChange={e => setEditForm({ ...editForm, elo_mens_doubles: parseInt(e.target.value, 10) || 0 })} placeholder="남복" />
+                                                                <input type="number" className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white w-20 text-xs" value={editForm.elo_womens_doubles ?? ''} onChange={e => setEditForm({ ...editForm, elo_womens_doubles: parseInt(e.target.value, 10) || 0 })} placeholder="여복" />
+                                                                <input type="number" className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white w-20 text-xs" value={editForm.elo_mixed_doubles ?? ''} onChange={e => setEditForm({ ...editForm, elo_mixed_doubles: parseInt(e.target.value, 10) || 0 })} placeholder="혼복" />
+                                                                <input type="number" className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white w-20 text-xs" value={editForm.elo_singles ?? ''} onChange={e => setEditForm({ ...editForm, elo_singles: parseInt(e.target.value, 10) || 0 })} placeholder="단식" />
+                                                            </div>
+                                                        ) : (
+                                                            <div className="text-[11px] font-mono text-slate-400 leading-5">
+                                                                <div>M {p.elo_mens_doubles ?? '-'}</div>
+                                                                <div>W {p.elo_womens_doubles ?? '-'}</div>
+                                                                <div>X {p.elo_mixed_doubles ?? '-'}</div>
+                                                                <div>S {p.elo_singles ?? '-'}</div>
+                                                            </div>
+                                                        )}
+                                                    </td>
+                                                    <td className="p-4">
+                                                        {editingId === p.id ? (
+                                                            <div className="space-y-1">
+                                                                <div className="font-mono text-slate-300 text-xs">현재: {(p.rally_point ?? 0).toLocaleString()}P</div>
+                                                                <input
+                                                                    type="number"
+                                                                    step="100"
+                                                                    className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white w-24 text-xs"
+                                                                    value={editForm.rally_point_delta ?? 0}
+                                                                    onChange={e => setEditForm({ ...editForm, rally_point_delta: parseInt(e.target.value, 10) || 0 })}
+                                                                />
+                                                                <div className="text-[10px] text-lime-400">추가(+)/차감(-)</div>
+                                                            </div>
+                                                        ) : (
+                                                            <span className="font-mono text-yellow-300">{(p.rally_point ?? 0).toLocaleString()}P</span>
+                                                        )}
+                                                    </td>
+                                                    <td className="p-4">
+                                                        {editingId === p.id ? (
                                                             <select
                                                                 className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white text-xs"
                                                                 value={editForm.role ?? ''}
                                                                 onChange={e => setEditForm({ ...editForm, role: e.target.value as 'admin' | 'player' | 'coach' })}
                                                             >
-                                                                <option value="member">Member</option>
+                                                                <option value="player">Player</option>
                                                                 <option value="coach">Coach</option>
                                                                 <option value="admin">Admin</option>
                                                             </select>
