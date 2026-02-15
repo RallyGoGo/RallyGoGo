@@ -1,4 +1,4 @@
-import { defineConfig, loadEnv } from 'vite'
+import { defineConfig, loadEnv, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 
 // https://vite.dev/config/
@@ -14,8 +14,33 @@ export default defineConfig(({ mode }) => {
   const anonKey = env.VITE_SUPABASE_ANON_KEY;
   console.log(`🔑 VITE_SUPABASE_ANON_KEY: ${anonKey ? `Present (Length: ${anonKey.length})` : 'UNDEFINED'}`)
 
+  const buildId = env.VERCEL_GIT_COMMIT_SHA || env.SOURCE_VERSION || new Date().toISOString();
+  const emittedAt = new Date().toISOString();
+
+  const versionAssetPlugin: Plugin = {
+    name: 'emit-version-json',
+    apply: 'build',
+    generateBundle() {
+      this.emitFile({
+        type: 'asset',
+        fileName: 'version.json',
+        source: JSON.stringify(
+          {
+            buildId,
+            emittedAt
+          },
+          null,
+          2
+        )
+      });
+    }
+  };
+
   return {
-    plugins: [react()],
+    plugins: [react(), versionAssetPlugin],
+    define: {
+      __APP_BUILD_ID__: JSON.stringify(buildId),
+    },
     build: {
       rollupOptions: {
         output: {

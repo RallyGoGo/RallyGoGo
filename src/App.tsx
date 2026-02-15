@@ -2,6 +2,7 @@ import { useState, lazy, Suspense, useMemo, useCallback } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from './lib/supabase';
 import { useRallyData } from './hooks/useRallyData';
+import { useAppUpdate } from './hooks/useAppUpdate';
 
 import Auth from './components/Auth';
 const JoinQueue = lazy(() => import('./components/JoinQueue'));
@@ -37,6 +38,7 @@ function LoadingSpinner({ message = '로딩 중...' }: { message?: string }) {
 export default function App() {
   // Use Custom Hook for Data
   const { session, profile, activeNotice, matches, queue, isInitializing, refetch } = useRallyData();
+  const { isUpdateAvailable, applyUpdate, dismissUpdate } = useAppUpdate();
 
   const [activeTab, setActiveTab] = useState<'PLAY' | 'RANK'>('PLAY');
 
@@ -156,6 +158,30 @@ export default function App() {
           </div>
         </div>
       </header>
+
+      {isUpdateAvailable && (
+        <div className="fixed top-20 left-3 right-3 z-[70] bg-cyan-950/95 border border-cyan-500/50 rounded-xl p-3 shadow-2xl">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs text-cyan-100">
+              새 버전이 배포되었습니다. 지금 업데이트하면 최신 기능/수정이 적용됩니다.
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={dismissUpdate}
+                className="px-2 py-1 rounded-md text-xs bg-slate-700 text-slate-200 hover:bg-slate-600"
+              >
+                나중에
+              </button>
+              <button
+                onClick={applyUpdate}
+                className="px-3 py-1 rounded-md text-xs font-bold bg-cyan-500 text-slate-900 hover:bg-cyan-400"
+              >
+                지금 업데이트
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 공지사항 */}
       {activeNotice && (
